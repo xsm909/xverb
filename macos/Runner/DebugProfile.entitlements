@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  No app sandbox. A dual-pane file manager exists to browse the whole disk,
+	  and a sandboxed app can only see its own container plus whatever the user
+	  hands it through an open panel one folder at a time. That rules out the
+	  Mac App Store, which is the trade every third-party file manager on macOS
+	  already makes. Distribution is direct, signed and notarised.
+
+	  Dropping the sandbox also unblocks two things it was silently breaking:
+	  outbound connections for the FTP plugin, and spawning a Python
+	  interpreter for the plugin host.
+
+	  What still guards the user is TCC, not us: Desktop, Documents, Downloads
+	  and removable volumes prompt on first touch, and the rest of the disk
+	  needs Full Disk Access granted in System Settings.
+	-->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<!-- The Dart VM service the Flutter tooling attaches to in debug builds. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>

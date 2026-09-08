@@ -1,0 +1,55 @@
+{
+  "id": "toml",
+  "name": "TOML",
+  "extensions": [
+    "toml"
+  ],
+  "lineComment": [
+    "#"
+  ],
+  "strings": [
+    {
+      "open": "\"\"\"",
+      "close": "\"\"\"",
+      "multiline": true
+    },
+    {
+      "open": "'''",
+      "close": "'''",
+      "escape": "",
+      "multiline": true
+    },
+    {
+      "open": "\"",
+      "close": "\""
+    },
+    {
+      "open": "'",
+      "close": "'",
+      "escape": ""
+    }
+  ],
+  "keywords": [],
+  "types": [],
+  "constants": [
+    "true",
+    "false"
+  ],
+  "linePatterns": [
+    {
+      "match": "\\[\\[?[^\\]]*\\]\\]?",
+      "role": "meta"
+    },
+    {
+      "match": "[A-Za-z0-9_.\\-\"]+(?=\\s*=)",
+      "role": "type"
+    }
+  ],
+  "sticky": [
+    "meta"
+  ],
+  "blocks": "none",
+  "outlineRoles": [
+    "meta"
+  ]
+}

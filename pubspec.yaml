@@ -1,0 +1,65 @@
+name: xverb
+description: "A modern, plugin-driven dual-pane file manager."
+repository: https://github.com/xsm909/xverb
+publish_to: 'none'
+
+# Build number is bumped once per development run — see lib/core/version.dart.
+version: 1.0.0+448
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # For the one hash this application computes: the key Gravatar is built on.
+  # First-party Dart, already in the resolved graph, and a hundred lines of
+  # bit-twiddling nobody should own for a lookup key.
+  crypto: ^3.0.0
+
+  cupertino_icons: ^1.0.8
+  # State management for panels, settings and the plugin registry.
+  provider: ^6.1.2
+  # Cross-platform path manipulation, used by the local VFS provider.
+  path: ^1.9.0
+  # Resolves per-platform locations for settings and the plugin directory.
+  path_provider: ^2.1.4
+  # Persists appearance and panel settings.
+  shared_preferences: ^2.3.0
+  # Reading the Windows drive table without touching the devices.
+  ffi: ^2.1.0
+  # Frameless window plus minimise/maximise/drag, so the title bar can be ours.
+  window_manager: ^0.5.2
+  # Windows/macOS backdrop effects behind a transparent window.
+  flutter_acrylic: ^1.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  # The Python plugin SDK travels inside the app bundle and is unpacked to the
+  # support directory at startup, so plugins can `import xverb` with
+  # nothing installed.
+  assets:
+    # The picture across the top of the About form. See assets/about/README.md
+    # for the size; without the file the form paints its own.
+    - assets/about/
+    - assets/python/xverb/
+    # Languages travel with the app rather than being installed: the interface
+    # has to be readable on a machine with nothing added to it.
+    - assets/i18n/
+    # Bundled declarative extensions. Pure data, so they load on every
+    # platform — including the ones where running plugin code is impossible.
+    - assets/plugins/index.json
+    - assets/plugins/viewer/
+    # One file per language, and an asset directory is not read recursively —
+    # so the folder that makes a grammar its own thing has to be named here as
+    # well, or the shipped copy would arrive with no languages in it.
+    - assets/plugins/viewer/grammars/
+    - assets/plugins/image/
+    - assets/plugins/audio/

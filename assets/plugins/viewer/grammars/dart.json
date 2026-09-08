@@ -1,0 +1,156 @@
+{
+  "id": "dart",
+  "name": "Dart",
+  "extensions": [
+    "dart"
+  ],
+  "lineComment": [
+    "///",
+    "//"
+  ],
+  "blockComment": [
+    [
+      "/*",
+      "*/"
+    ]
+  ],
+  "strings": [
+    {
+      "open": "r\"\"\"",
+      "close": "\"\"\"",
+      "escape": "",
+      "multiline": true
+    },
+    {
+      "open": "r'''",
+      "close": "'''",
+      "escape": "",
+      "multiline": true
+    },
+    {
+      "open": "\"\"\"",
+      "close": "\"\"\"",
+      "multiline": true
+    },
+    {
+      "open": "'''",
+      "close": "'''",
+      "multiline": true
+    },
+    {
+      "open": "r\"",
+      "close": "\"",
+      "escape": ""
+    },
+    {
+      "open": "r'",
+      "close": "'",
+      "escape": ""
+    },
+    {
+      "open": "\"",
+      "close": "\""
+    },
+    {
+      "open": "'",
+      "close": "'"
+    }
+  ],
+  "keywords": [
+    "abstract",
+    "as",
+    "assert",
+    "async",
+    "await",
+    "base",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "covariant",
+    "default",
+    "deferred",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "extension",
+    "external",
+    "factory",
+    "final",
+    "finally",
+    "for",
+    "get",
+    "hide",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "interface",
+    "is",
+    "late",
+    "library",
+    "mixin",
+    "new",
+    "on",
+    "operator",
+    "part",
+    "required",
+    "rethrow",
+    "return",
+    "sealed",
+    "set",
+    "show",
+    "static",
+    "super",
+    "switch",
+    "sync",
+    "this",
+    "throw",
+    "try",
+    "typedef",
+    "var",
+    "when",
+    "while",
+    "with",
+    "yield"
+  ],
+  "types": [
+    "bool",
+    "dynamic",
+    "double",
+    "Duration",
+    "Function",
+    "Future",
+    "int",
+    "Iterable",
+    "List",
+    "Map",
+    "num",
+    "Object",
+    "Record",
+    "Set",
+    "Stream",
+    "String",
+    "Symbol",
+    "Type",
+    "Uri",
+    "void"
+  ],
+  "constants": [
+    "true",
+    "false",
+    "null"
+  ],
+  "linePatterns": [],
+  "blocks": "braces",
+  "declares": [
+    "class",
+    "enum",
+    "mixin",
+    "extension"
+  ]
+}

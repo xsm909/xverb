@@ -1,0 +1,57 @@
+{
+  "id": "makefile",
+  "name": "Makefile",
+  "extensions": [
+    "mk",
+    "mak"
+  ],
+  "names": [
+    "makefile",
+    "gnumakefile"
+  ],
+  "lineComment": [
+    "#"
+  ],
+  "strings": [
+    {
+      "open": "\"",
+      "close": "\""
+    },
+    {
+      "open": "'",
+      "close": "'"
+    }
+  ],
+  "keywords": [
+    "include",
+    "ifeq",
+    "ifneq",
+    "ifdef",
+    "ifndef",
+    "else",
+    "endif",
+    "define",
+    "endef",
+    "export",
+    "unexport",
+    "override",
+    "vpath"
+  ],
+  "types": [
+    ".PHONY",
+    ".DEFAULT",
+    ".PRECIOUS",
+    ".SUFFIXES"
+  ],
+  "constants": [],
+  "linePatterns": [
+    {
+      "match": "[A-Za-z0-9_./$()%-]+\\s*(?=:[^=])",
+      "role": "type"
+    }
+  ],
+  "blocks": "none",
+  "outlineRoles": [
+    "type"
+  ]
+}

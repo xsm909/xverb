@@ -1,0 +1,37 @@
+{
+  "id": "org.xverb.builtin.image",
+  "name": "Images",
+  "version": "1.1.0",
+  "description": "Shows the pictures the machine's own decoder already reads, on a canvas with fit, 1:1 and zoom. Which of these a machine actually reads is not the same everywhere — PNG, JPEG, GIF, WebP and BMP are read anywhere the application runs, and the rest depend on what the system brings.",
+  "author": "xverb",
+  "apiVersion": 1,
+  "runtime": "declarative",
+  "viewers": [
+    {
+      "id": "builtin.image",
+      "title": "Image",
+      "priority": 20,
+      "extensions": [
+        "png",
+        "jpg",
+        "jpeg",
+        "jfif",
+        "jpe",
+        "gif",
+        "webp",
+        "bmp",
+        "ico",
+        "heic",
+        "heif",
+        "avif",
+        "jp2"
+      ],
+      "render": {
+        "kind": "image",
+        "maxBytes": 33554432
+      },
+      "produces": "picture"
+    }
+  ],
+  "category": "Viewers"
+}

@@ -1,0 +1,42 @@
+{
+  "id": "org.xverb.builtin.audio",
+  "name": "Sound",
+  "version": "1.0.0",
+  "description": "Plays the sounds the machine's own engine already reads, drawn as the shape of the whole file with the playhead running through it. Which of these a machine plays is not the same everywhere — mp3, wav and m4a are read wherever the application runs, and the rest depend on what the system brings: aiff and caf are the Mac's, wma is Windows'.",
+  "author": "xverb",
+  "apiVersion": 1,
+  "runtime": "declarative",
+  "viewers": [
+    {
+      "id": "builtin.audio",
+      "title": "Sound",
+      "priority": 20,
+      "extensions": [
+        "mp3",
+        "wav",
+        "wave",
+        "m4a",
+        "m4b",
+        "aac",
+        "adts",
+        "flac",
+        "aiff",
+        "aif",
+        "aifc",
+        "caf",
+        "wma",
+        "amr",
+        "ac3",
+        "au",
+        "snd",
+        "mp2"
+      ],
+      "render": {
+        "kind": "audio",
+        "maxBytes": 268435456
+      },
+      "produces": "sound"
+    }
+  ],
+  "category": "Viewers"
+}

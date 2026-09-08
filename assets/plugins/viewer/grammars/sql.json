@@ -1,0 +1,130 @@
+{
+  "id": "sql",
+  "name": "SQL",
+  "extensions": [
+    "sql"
+  ],
+  "caseSensitive": false,
+  "lineComment": [
+    "--"
+  ],
+  "blockComment": [
+    [
+      "/*",
+      "*/"
+    ]
+  ],
+  "strings": [
+    {
+      "open": "'",
+      "close": "'",
+      "escape": ""
+    },
+    {
+      "open": "\"",
+      "close": "\"",
+      "escape": ""
+    }
+  ],
+  "keywords": [
+    "alter",
+    "and",
+    "as",
+    "asc",
+    "begin",
+    "between",
+    "by",
+    "case",
+    "commit",
+    "create",
+    "cross",
+    "delete",
+    "desc",
+    "distinct",
+    "drop",
+    "else",
+    "end",
+    "exists",
+    "from",
+    "full",
+    "group",
+    "having",
+    "if",
+    "in",
+    "index",
+    "inner",
+    "insert",
+    "into",
+    "join",
+    "left",
+    "like",
+    "limit",
+    "not",
+    "on",
+    "or",
+    "order",
+    "outer",
+    "primary",
+    "references",
+    "right",
+    "rollback",
+    "select",
+    "set",
+    "table",
+    "then",
+    "transaction",
+    "union",
+    "unique",
+    "update",
+    "using",
+    "values",
+    "view",
+    "when",
+    "where",
+    "with"
+  ],
+  "types": [
+    "bigint",
+    "blob",
+    "boolean",
+    "char",
+    "date",
+    "datetime",
+    "decimal",
+    "double",
+    "float",
+    "int",
+    "integer",
+    "json",
+    "numeric",
+    "real",
+    "smallint",
+    "text",
+    "time",
+    "timestamp",
+    "uuid",
+    "varchar"
+  ],
+  "constants": [
+    "null",
+    "true",
+    "false",
+    "default"
+  ],
+  "linePatterns": [],
+  "blocks": "none",
+  "outline": [
+    {
+      "match": "create\\s+(?:or\\s+replace\\s+)?(?:temp(?:orary)?\\s+)?(?:table|materialized\\s+view|view)\\s+(?:if\\s+not\\s+exists\\s+)?([\\w.\"\\[\\]`]+)",
+      "kind": "type"
+    },
+    {
+      "match": "create\\s+(?:or\\s+replace\\s+)?(?:function|procedure|trigger)\\s+([\\w.\"\\[\\]`]+)",
+      "kind": "function"
+    },
+    {
+      "match": "create\\s+(?:unique\\s+)?index\\s+(?:if\\s+not\\s+exists\\s+)?([\\w.\"\\[\\]`]+)",
+      "kind": "section"
+    }
+  ]
+}

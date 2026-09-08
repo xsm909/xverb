@@ -1,0 +1,26 @@
+{
+  "id": "gitignore",
+  "name": "Ignore lists",
+  "extensions": [
+    "gitignore",
+    "gitattributes",
+    "dockerignore",
+    "npmignore",
+    "eslintignore",
+    "prettierignore",
+    "helmignore"
+  ],
+  "lineComment": [
+    "#"
+  ],
+  "strings": [],
+  "keywords": [],
+  "types": [],
+  "constants": [],
+  "linePatterns": [
+    {
+      "match": "!.*",
+      "role": "meta"
+    }
+  ]
+}

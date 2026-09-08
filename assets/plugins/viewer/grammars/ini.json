@@ -1,0 +1,57 @@
+{
+  "id": "ini",
+  "name": "INI and config",
+  "extensions": [
+    "ini",
+    "cfg",
+    "conf",
+    "config",
+    "properties",
+    "env",
+    "gitconfig",
+    "gitmodules",
+    "editorconfig",
+    "npmrc",
+    "flake8",
+    "pylintrc"
+  ],
+  "caseSensitive": false,
+  "lineComment": [
+    ";",
+    "#"
+  ],
+  "strings": [
+    {
+      "open": "\"",
+      "close": "\""
+    }
+  ],
+  "keywords": [],
+  "types": [],
+  "constants": [
+    "true",
+    "false"
+  ],
+  "linePatterns": [
+    {
+      "match": "\\[[^\\]]*\\]",
+      "role": "meta"
+    },
+    {
+      "match": "[+\\-.!]?[A-Za-z0-9_.\\[\\] ]+(?=\\s*=)",
+      "role": "type"
+    }
+  ],
+  "names": [
+    "gitconfig",
+    "npmrc",
+    "editorconfig"
+  ],
+  "sticky": [
+    "meta"
+  ],
+  "blocks": "none",
+  "outlineRoles": [
+    "meta"
+  ]
+}

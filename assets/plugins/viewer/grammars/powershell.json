@@ -1,0 +1,107 @@
+{
+  "id": "powershell",
+  "name": "PowerShell",
+  "extensions": [
+    "ps1",
+    "psm1",
+    "psd1"
+  ],
+  "caseSensitive": false,
+  "lineComment": [
+    "#"
+  ],
+  "blockComment": [
+    [
+      "<#",
+      "#>"
+    ]
+  ],
+  "strings": [
+    {
+      "open": "@\"",
+      "close": "\"@",
+      "multiline": true
+    },
+    {
+      "open": "@'",
+      "close": "'@",
+      "escape": "",
+      "multiline": true
+    },
+    {
+      "open": "\"",
+      "close": "\"",
+      "escape": "`"
+    },
+    {
+      "open": "'",
+      "close": "'",
+      "escape": ""
+    }
+  ],
+  "keywords": [
+    "begin",
+    "break",
+    "catch",
+    "class",
+    "continue",
+    "data",
+    "do",
+    "dynamicparam",
+    "else",
+    "elseif",
+    "end",
+    "enum",
+    "exit",
+    "filter",
+    "finally",
+    "for",
+    "foreach",
+    "function",
+    "if",
+    "in",
+    "param",
+    "process",
+    "return",
+    "switch",
+    "throw",
+    "trap",
+    "try",
+    "until",
+    "using",
+    "while"
+  ],
+  "types": [
+    "Get-ChildItem",
+    "Get-Content",
+    "Get-Item",
+    "Join-Path",
+    "New-Item",
+    "Out-File",
+    "Remove-Item",
+    "Select-Object",
+    "Set-Content",
+    "Split-Path",
+    "Start-Process",
+    "Test-Path",
+    "Where-Object",
+    "Write-Error",
+    "Write-Host",
+    "Write-Output"
+  ],
+  "constants": [
+    "$true",
+    "$false",
+    "$null"
+  ],
+  "linePatterns": [],
+  "blocks": "braces",
+  "declares": [
+    "function",
+    "filter",
+    "workflow",
+    "class",
+    "enum"
+  ],
+  "statementsEndAtLine": true
+}

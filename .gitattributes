@@ -1,0 +1,31 @@
+# Line endings, decided here rather than by whoever checked the repository out.
+#
+# Without a rule the answer is each machine's core.autocrlf, and this project is
+# built on three of them: Windows says CRLF, the Mac and Linux say nothing. Two
+# sample files already reached the history with carriage returns in them that
+# way. So the repository states it once, for every machine, and a checkout is
+# the same bytes wherever it happens.
+#
+# LF rather than "whatever the platform prefers", for three reasons this
+# project has already paid for:
+#
+#  - tool/installer/install.sh is copied into a release as it is, and run by
+#    `sh` on a machine that has nothing else. With CRLF endings the shell reads
+#    the carriage return as part of the last word on the line and refuses
+#    `set -eu` as an illegal option — a release that built cleanly on the build
+#    machine and is broken on the target one.
+#  - The outline goldens under test/data are compared byte for byte against
+#    text the test builds with '\n'. A checkout that turns them into CRLF fails
+#    eleven tests with a diff that shows two identical-looking trees, which is
+#    how this was found on Linux — and the same checkout does it on Windows.
+#  - Nothing in the build minds. Dart, CMake, MSVC, the resource compiler and
+#    Python all read LF, and so does every editor written this century.
+#
+# text=auto is kept alongside eol=lf so files git detects as binary — the
+# pictures, the icons, the sample archives — are still left alone.
+* text=auto eol=lf
+
+# PowerShell reads either, but a file Notepad opens is nicer with CRLF, and
+# install.ps1 is the one a person might have to look at on a machine with
+# nothing installed.
+*.ps1 text eol=crlf

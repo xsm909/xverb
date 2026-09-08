@@ -1,0 +1,279 @@
+{
+  "id": "org.xverb.builtin.viewer",
+  "name": "Files as text",
+  "version": "1.5.0",
+  "description": "One viewer for the files that are text: plain, coloured by language, formatted JSON, Markdown, delimited tables, numbered lines, and the hex dump nothing else claims. Shift+F3 chooses between the readings.",
+  "category": "Viewers",
+  "author": "xverb",
+  "apiVersion": 1,
+  "runtime": "declarative",
+  "settings": [
+    {
+      "key": "weightOffset",
+      "label": "Weight of the text",
+      "type": "integer",
+      "default": 0,
+      "minimum": -300,
+      "maximum": 300,
+      "step": 100,
+      "note": "A shift of the interface weight, on the same hundred scale the appearance settings use and in the same steps: -300 to 300, so -100 is one step lighter and 100 one step heavier. A monospaced family often reads thinner than the interface at the same weight, and this is the knob for that without moving the rest of the application. Only the readings that are text — plain, coloured code and the hex dump."
+    },
+    {
+      "key": "syntaxWeightOffset",
+      "label": "Weight of the coloured words",
+      "type": "integer",
+      "default": 0,
+      "minimum": -300,
+      "maximum": 300,
+      "step": 100,
+      "note": "A shift for the words the colouring picks out — keywords, types, strings, numbers and constants — on top of the weight above, in the same hundred steps. One setting for all of them rather than one per kind: a weight per colour is four knobs nobody turns and a way to make a page look assembled. Comments keep the page's own weight, being the part that is deliberately quiet."
+    }
+  ],
+  "viewers": [
+    {
+      "id": "builtin.text",
+      "title": "Text",
+      "priority": 10,
+      "extensions": [
+        "txt",
+        "text",
+        "md",
+        "markdown",
+        "log",
+        "out",
+        "err",
+        "ini",
+        "cfg",
+        "conf",
+        "config",
+        "toml",
+        "yaml",
+        "yml",
+        "xml",
+        "html",
+        "htm",
+        "css",
+        "svg",
+        "xaml",
+        "plist",
+        "xhtml",
+        "xsd",
+        "csproj",
+        "vcxproj",
+        "json",
+        "jsonc",
+        "py",
+        "pyw",
+        "pyi",
+        "dart",
+        "js",
+        "mjs",
+        "cjs",
+        "ts",
+        "tsx",
+        "jsx",
+        "c",
+        "h",
+        "cpp",
+        "hpp",
+        "cxx",
+        "hxx",
+        "cc",
+        "inl",
+        "ino",
+        "cs",
+        "go",
+        "rs",
+        "java",
+        "kt",
+        "kts",
+        "swift",
+        "rb",
+        "php",
+        "lua",
+        "sql",
+        "sh",
+        "bash",
+        "zsh",
+        "ksh",
+        "bashrc",
+        "zshrc",
+        "profile",
+        "bat",
+        "cmd",
+        "ps1",
+        "psm1",
+        "psd1",
+        "gradle",
+        "properties",
+        "gitignore",
+        "gitattributes",
+        "gitconfig",
+        "editorconfig",
+        "env",
+        "dockerfile",
+        "makefile",
+        "cmake",
+        "diff",
+        "patch",
+        "csv",
+        "tsv",
+        "dockerignore",
+        "eslintignore",
+        "flake8",
+        "gitmodules",
+        "helmignore",
+        "npmignore",
+        "npmrc",
+        "prettierignore",
+        "pylintrc",
+        "metadata"
+      ],
+      "render": {
+        "kind": "text",
+        "encoding": "utf-8",
+        "syntax": "auto",
+        "maxBytes": 2097152
+      },
+      "fallback": true,
+      "names": [
+        "licence",
+        "license",
+        "copying",
+        "notice",
+        "authors",
+        "contributors",
+        "changelog",
+        "changes",
+        "readme",
+        "makefile",
+        "dockerfile",
+        "containerfile",
+        "gemfile",
+        "rakefile",
+        "procfile",
+        "vagrantfile",
+        "commit_editmsg",
+        "merge_msg",
+        "codeowners",
+        "todo"
+      ]
+    },
+    {
+      "id": "builtin.markdown",
+      "title": "Markdown",
+      "priority": 40,
+      "extensions": [
+        "md",
+        "markdown",
+        "mdown",
+        "mkd",
+        "mdx"
+      ],
+      "render": {
+        "kind": "markdown",
+        "encoding": "utf-8",
+        "maxBytes": 4194304
+      },
+      "names": [
+        "readme",
+        "changelog",
+        "contributing"
+      ]
+    },
+    {
+      "id": "builtin.json.pretty",
+      "title": "Formatted JSON",
+      "priority": 30,
+      "extensions": [
+        "json",
+        "jsonc",
+        "geojson",
+        "webmanifest"
+      ],
+      "render": {
+        "kind": "text",
+        "transform": "json-pretty",
+        "maxBytes": 8388608
+      }
+    },
+    {
+      "id": "builtin.json.table",
+      "title": "JSON as table",
+      "priority": 25,
+      "extensions": [
+        "json",
+        "geojson"
+      ],
+      "render": {
+        "kind": "table",
+        "source": "json",
+        "maxBytes": 8388608,
+        "maxRows": 5000
+      }
+    },
+    {
+      "id": "builtin.csv",
+      "title": "Table",
+      "priority": 20,
+      "extensions": [
+        "csv"
+      ],
+      "render": {
+        "kind": "table",
+        "source": "csv",
+        "delimiter": "auto",
+        "hasHeader": true,
+        "maxBytes": 4194304,
+        "maxRows": 5000
+      }
+    },
+    {
+      "id": "builtin.tsv",
+      "title": "Table",
+      "priority": 20,
+      "extensions": [
+        "tsv",
+        "tab"
+      ],
+      "render": {
+        "kind": "table",
+        "source": "tsv",
+        "hasHeader": true,
+        "maxBytes": 4194304,
+        "maxRows": 5000
+      }
+    },
+    {
+      "id": "builtin.lines",
+      "title": "Numbered lines",
+      "priority": 5,
+      "extensions": [
+        "log",
+        "out",
+        "err",
+        "txt",
+        "csv",
+        "tsv"
+      ],
+      "render": {
+        "kind": "table",
+        "source": "lines",
+        "maxBytes": 2097152,
+        "maxRows": 20000
+      }
+    },
+    {
+      "id": "builtin.hex",
+      "title": "Hex dump",
+      "priority": 0,
+      "extensions": [
+        "*"
+      ],
+      "render": {
+        "kind": "hex",
+        "maxBytes": 262144
+      }
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "id": "yaml",
+  "name": "YAML",
+  "extensions": [
+    "yaml",
+    "yml",
+    "metadata"
+  ],
+  "lineComment": [
+    "#"
+  ],
+  "strings": [
+    {
+      "open": "\"",
+      "close": "\""
+    },
+    {
+      "open": "'",
+      "close": "'"
+    }
+  ],
+  "keywords": [],
+  "types": [],
+  "constants": [
+    "true",
+    "false",
+    "null",
+    "yes",
+    "no",
+    "on",
+    "off",
+    "~"
+  ],
+  "linePatterns": [
+    {
+      "match": "---",
+      "role": "meta"
+    },
+    {
+      "match": "-?\\s*[A-Za-z_][A-Za-z0-9_.\\-]*(?=\\s*:)",
+      "role": "type"
+    }
+  ],
+  "blocks": "indent",
+  "outlineRoles": [
+    "type"
+  ]
+}

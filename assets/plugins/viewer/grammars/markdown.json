@@ -1,0 +1,33 @@
+{
+  "id": "markdown",
+  "name": "Markdown",
+  "extensions": [
+    "md",
+    "markdown",
+    "mdown",
+    "mkd",
+    "mdx"
+  ],
+  "names": [
+    "readme",
+    "changelog",
+    "contributing"
+  ],
+  "keywords": [],
+  "types": [],
+  "constants": [],
+  "linePatterns": [
+    {
+      "match": "#{1,6}\\s+.*",
+      "role": "meta"
+    }
+  ],
+  "sticky": [
+    "meta"
+  ],
+  "blocks": "none",
+  "outlineRoles": [
+    "meta"
+  ],
+  "numbers": false
+}

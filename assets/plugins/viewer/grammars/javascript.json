@@ -1,0 +1,125 @@
+{
+  "id": "javascript",
+  "name": "JavaScript and TypeScript",
+  "extensions": [
+    "js",
+    "mjs",
+    "cjs",
+    "jsx",
+    "ts",
+    "tsx"
+  ],
+  "lineComment": [
+    "//"
+  ],
+  "blockComment": [
+    [
+      "/*",
+      "*/"
+    ]
+  ],
+  "strings": [
+    {
+      "open": "`",
+      "close": "`",
+      "multiline": true
+    },
+    {
+      "open": "\"",
+      "close": "\""
+    },
+    {
+      "open": "'",
+      "close": "'"
+    }
+  ],
+  "keywords": [
+    "as",
+    "async",
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "declare",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "finally",
+    "for",
+    "from",
+    "function",
+    "get",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "let",
+    "new",
+    "of",
+    "private",
+    "protected",
+    "public",
+    "readonly",
+    "return",
+    "satisfies",
+    "set",
+    "static",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "try",
+    "type",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield"
+  ],
+  "types": [
+    "any",
+    "Array",
+    "bigint",
+    "boolean",
+    "Date",
+    "Error",
+    "Map",
+    "never",
+    "number",
+    "Object",
+    "Promise",
+    "RegExp",
+    "Set",
+    "string",
+    "symbol",
+    "unknown"
+  ],
+  "constants": [
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "NaN",
+    "Infinity"
+  ],
+  "linePatterns": [],
+  "blocks": "braces",
+  "declares": [
+    "class",
+    "interface",
+    "enum",
+    "namespace",
+    "module"
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "shell",
+  "name": "Shell",
+  "extensions": [
+    "sh",
+    "bash",
+    "zsh",
+    "ksh",
+    "profile",
+    "bashrc",
+    "zshrc"
+  ],
+  "lineComment": [
+    "#"
+  ],
+  "strings": [
+    {
+      "open": "\"",
+      "close": "\"",
+      "multiline": true
+    },
+    {
+      "open": "'",
+      "close": "'",
+      "escape": "",
+      "multiline": true
+    }
+  ],
+  "keywords": [
+    "case",
+    "do",
+    "done",
+    "elif",
+    "else",
+    "esac",
+    "export",
+    "fi",
+    "for",
+    "function",
+    "if",
+    "in",
+    "local",
+    "read",
+    "readonly",
+    "return",
+    "select",
+    "shift",
+    "source",
+    "then",
+    "trap",
+    "unset",
+    "until",
+    "while"
+  ],
+  "types": [
+    "cat",
+    "cd",
+    "chmod",
+    "cp",
+    "curl",
+    "echo",
+    "exit",
+    "find",
+    "grep",
+    "git",
+    "kill",
+    "ls",
+    "mkdir",
+    "mv",
+    "printf",
+    "rm",
+    "sed",
+    "set",
+    "sudo",
+    "tar",
+    "test",
+    "touch",
+    "wget"
+  ],
+  "constants": [
+    "true",
+    "false"
+  ],
+  "linePatterns": [
+    {
+      "match": "#!.*",
+      "role": "meta"
+    }
+  ],
+  "blocks": "braces",
+  "declares": [
+    "function"
+  ],
+  "statementsEndAtLine": true
+}

@@ -1,0 +1,76 @@
+{
+  "id": "xml",
+  "name": "XML and HTML",
+  "extensions": [
+    "xml",
+    "html",
+    "htm",
+    "svg",
+    "xaml",
+    "plist",
+    "xhtml",
+    "xsd",
+    "csproj",
+    "vcxproj"
+  ],
+  "blockComment": [
+    [
+      "<!--",
+      "-->"
+    ]
+  ],
+  "strings": [
+    {
+      "open": "\"",
+      "close": "\""
+    },
+    {
+      "open": "'",
+      "close": "'"
+    }
+  ],
+  "keywords": [],
+  "types": [],
+  "constants": [
+    "true",
+    "false"
+  ],
+  "linePatterns": [
+    {
+      "match": "<\\?[^>]*\\?>",
+      "role": "meta"
+    },
+    {
+      "match": "<!DOCTYPE[^>]*>",
+      "role": "meta"
+    }
+  ],
+  "blocks": "none",
+  "outline": [
+    {
+      "match": "<h([1-6])\\b[^>]*>\\s*([^<]{1,80})",
+      "kind": "heading",
+      "name": 2
+    },
+    {
+      "match": "<(header|nav|main|section|article|aside|footer|form|table|figure)\\b[^>]*\\bid=\"([^\"]{1,60})\"",
+      "kind": "section",
+      "name": 2
+    },
+    {
+      "match": "<(header|nav|main|section|article|aside|footer|form|table|figure)\\b",
+      "kind": "section",
+      "name": 1
+    },
+    {
+      "match": "<(title|script|style|template)\\b",
+      "kind": "section",
+      "name": 1
+    },
+    {
+      "match": "<(PropertyGroup|ItemGroup|Target|Project)\\b",
+      "kind": "section",
+      "name": 1
+    }
+  ]
+}
