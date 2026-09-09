@@ -42,17 +42,22 @@ question — what it does that the one you already have does not — see
   and resizable, full-screen on a phone — see [docs/windows.md](docs/windows.md)
 - An appearance settings page: colours, font, density, presets
 
-## What the core deliberately does not do
+## What the core deliberately does not do — and what does it
 
-- View or edit files. F3 asks the plugin registry which viewer claims the
-  extension and hands the file over. With no viewer plugin installed, F3 says so.
-- Speak FTP, SFTP, SMB, WebDAV or anything else. Those are plugins.
-- Understand archives. Enter on a `.zip` opens it as a folder, but only because
-  a plugin claims the extension and serves a `zip:` scheme; the core never
-  learns what a ZIP is. See "Files that are really folders" in
-  [docs/plugins.md](docs/plugins.md).
-- Compare directories, sync folders, or run a shell. Folder comparison exists
-  as a plugin in the collection; synchronising and a shell do not exist at all.
+A list of limits with nothing beside it reads as a list of missing features, so
+here is the other column.
+
+| The core does not | What does |
+| --- | --- |
+| View or edit files | The viewer plugins — ten in the collection, from Markdown through 3D models to audio spectrograms. F3 asks the registry which one claims the extension and hands the file over; with none installed, F3 says so. |
+| Speak FTP, SFTP, SMB or WebDAV | Transport plugins. `ftp`, `smb` and `web` are in the collection, standard library only. |
+| Understand archives | The `archives` plugin claims the extension and serves a `zip:` scheme, which is why Enter walks into a `.zip`. The core never learns what a ZIP is — see "Files that are really folders" in [docs/plugins.md](docs/plugins.md). |
+| Compare directories | The `compare` plugin: what is only on one side, and what is on both but different. |
+| Implement a shell | The command line along the bottom of the window, which hands what you type to one — system default, Command Prompt, PowerShell, Git Bash or Bash, whichever the machine has. It is a line to type a command on, not a terminal emulator. |
+
+Everything above but the last row is a plugin, and none of them needed the core
+touched. Synchronising folders is the one thing on the list that does not exist
+anywhere yet.
 
 ## Platforms
 
@@ -137,28 +142,36 @@ against its published sum.
 
 ### Signing, quarantine, and what the installer does
 
-The bundles are **not signed and not notarised**. A Developer ID costs $99 a
-year and this is one person at an early stage, so it has not been paid for yet.
-There is nothing to read into that beyond the money.
+The bundles are **not signed and not notarised**. It is on the list; it is not
+done.
 
-It matters most on macOS. A file that came out of a browser carries a
-quarantine flag, and an unsigned application carrying that flag is one macOS
-refuses to open at all — not with a warning, but outright. **So the installer
-removes the flag from the copy it installs**, with
-`xattr -d com.apple.quarantine` on the installed bundle. That is Gatekeeper
-being stepped around on your behalf, and it is written here rather than left to
-be found in the source. Windows is the same shape of thing at a lower stake:
-the installer is an unsigned script, which is why it is run as
+It shows up most on macOS. A file that came out of a browser carries a
+quarantine flag, and an unsigned application carrying that flag is one the
+system will not open on the first attempt. There is a supported way through —
+System Settings → Privacy & Security, find the entry about the blocked
+application, press **Open Anyway** — and it works. It is not a place everybody
+finds first time.
+
+**The installer takes that step off you**: it removes the quarantine flag from
+the copy it installs, with `xattr -d com.apple.quarantine` on the installed
+bundle. What that means is worth saying rather than leaving to be found in the
+source — the check macOS would have made on first launch does not happen.
+Windows is the same shape of thing at a lower stake: the installer is an
+unsigned script, which is why it is run as
 `powershell -ExecutionPolicy Bypass -File install.ps1`.
 
-If you would rather not hand that over, there are two other ways in. Unpack the
-archive yourself and clear the flag by hand — the same command, run by you
-instead of by a script. Or build it: see [Building](#building) above.
+If you would rather not hand that step to a script, there are two ways round
+it. Unpack the archive yourself and go through Open Anyway — the flag stays
+where it is and the application runs. Or build it: see [Building](#building)
+above.
 
 Every archive has its own `.sha256` lying beside it in the
 [release folder](https://github.com/xsm909/xverb-release/tree/main/release).
-That file is the published sum, and it is the one the installer checks against
-when it fetches a release itself. Check it before you run anything:
+That is the sum the installer checks against when it fetches a release itself.
+Be clear about what it is for: it catches a download that arrived broken, not a
+release that was replaced — the sum sits in the same place as the archive, so
+whatever could change one could change the other. Check it before you run
+anything:
 
 ```
 shasum -a 256 xverb-*-macos-arm64.tar.gz                    # macOS
@@ -166,8 +179,10 @@ sha256sum xverb-*-linux-x64.tar.gz                          # Linux
 Get-FileHash xverb-*-windows-x64.zip -Algorithm SHA256      # Windows
 ```
 
-Meant to come next, with no date on any of it: an ad-hoc signature on the macOS
-bundle, then a real one and notarisation, then a signed Windows installer.
+Meant to come next, with no date on it: a Developer ID signature, notarisation,
+and a signed installer on Windows. An ad-hoc signature is not on that list — it
+changes nothing for anyone downloading the file, because a quarantined ad-hoc
+bundle is refused exactly as an unsigned one is.
 
 | | Run as yourself | Run elevated |
 | --- | --- | --- |
@@ -275,8 +290,8 @@ plugin.run()
 The worked examples live in
 [xsm909/xverb-plugins](https://github.com/xsm909/xverb-plugins):
 `ftp` and `smb` (transports registering the `ftp:` and `smb:` schemes, stdlib
-only) and `zip-viewer` (archive listing — the boundary case declarative
-extensions cannot reach).
+only) and `archives` (archives walked as folders — the boundary case
+declarative extensions cannot reach).
 
 See [docs/plugins.md](docs/plugins.md) for the full API and protocol.
 
