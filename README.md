@@ -11,11 +11,15 @@ build real features on.
 
 Also like Blender, there are two ways to extend it. **Python plugins** run
 arbitrary code in their own process. **Declarative extensions** are pure JSON
-that composes the host's built-in render primitives — no code, no interpreter,
-so they load on every platform, including the ones where executing plugin code
-is impossible. Blender's node groups and theme extensions make the same trade.
+that composes the host's built-in render primitives — no code and no
+interpreter, so by construction they need nothing the platform has to allow,
+which is the answer for the platforms where executing plugin code is
+impossible. Blender's node groups and theme extensions make the same trade.
 
-**Status: early.** Builds and runs on Windows; other platforms are untested.
+**Status: early.** Windows, macOS and Linux are what this is developed and used
+on. Android builds and runs, with little mileage on it. **iOS has not been
+built yet** — it is a Flutter target, and nothing beyond that has been
+verified. The table under [Platforms](#platforms) says which is which.
 
 The list below is what the core *does*. For the shorter and more interesting
 question — what it does that the one you already have does not — see
@@ -47,21 +51,28 @@ question — what it does that the one you already have does not — see
   a plugin claims the extension and serves a `zip:` scheme; the core never
   learns what a ZIP is. See "Files that are really folders" in
   [docs/plugins.md](docs/plugins.md).
-- Compare directories, sync folders, or run a shell.
+- Compare directories, sync folders, or run a shell. Folder comparison exists
+  as a plugin in the collection; synchronising and a shell do not exist at all.
 
 ## Platforms
 
 | Platform | Core | Declarative extensions | Python plugins |
 | --- | --- | --- | --- |
-| Windows | yes | yes | yes |
-| macOS | yes | yes | yes |
-| Linux | yes | yes | yes |
-| Android | yes | yes | no — see below |
-| iOS | yes | yes | no — see below |
+| Windows | ● | ● | ● |
+| macOS | ● | ● | ● |
+| Linux | ● | ● | ● |
+| Android | ○ | ○ | — |
+| iOS | — | — | — |
 
-Spawning a Python interpreter is not possible on iOS at all, and impractical on
-Android without embedding a runtime. Declarative extensions cover that gap for
-viewing; network transports on mobile still need work. See
+● works, and is what the development happens on · ○ builds and runs, little
+mileage on it · — not supported, or never tried.
+
+Windows, macOS and Linux are what this is developed and used on. Android builds
+and runs: there are no Python plugins there — embedding an interpreter is
+impractical — and the network transports still need work. **iOS has not been
+built yet.** Spawning a Python interpreter is not possible there at all, so the
+Python column would be a dash whatever happened, but the other two columns are
+dashes because nothing has been tried rather than because something failed. See
 [docs/mobile.md](docs/mobile.md).
 
 ## Building
@@ -103,10 +114,11 @@ proprietary NVIDIA driver, or `LIBGL_ALWAYS_SOFTWARE=1` until it is installed.
 
 ## Installing
 
-A release is **two files** — the archive and the installer beside it — and
-nothing is fetched while it installs: the machine it lands on needs no clone,
-no Flutter SDK and no network. Put both anywhere, Downloads being the obvious
-place, and run the installer:
+A release is **two files** — the archive and the installer beside it. With both
+in place nothing is fetched while it installs: the machine it lands on needs no
+clone, no Flutter SDK and no network. Run the installer on its own and it will
+fetch the newest release itself and check it against its published sum. Put
+both anywhere, Downloads being the obvious place, and run the installer:
 
 ```
 sh install.sh                                             # macOS, Linux
@@ -122,6 +134,40 @@ newest `xverb-*` archive in Downloads — the real one, read from the desktop's
 own configuration — or the newest release fetched from
 [xsm909/xverb-release](https://github.com/xsm909/xverb-release) and checked
 against its published sum.
+
+### Signing, quarantine, and what the installer does
+
+The bundles are **not signed and not notarised**. A Developer ID costs $99 a
+year and this is one person at an early stage, so it has not been paid for yet.
+There is nothing to read into that beyond the money.
+
+It matters most on macOS. A file that came out of a browser carries a
+quarantine flag, and an unsigned application carrying that flag is one macOS
+refuses to open at all — not with a warning, but outright. **So the installer
+removes the flag from the copy it installs**, with
+`xattr -d com.apple.quarantine` on the installed bundle. That is Gatekeeper
+being stepped around on your behalf, and it is written here rather than left to
+be found in the source. Windows is the same shape of thing at a lower stake:
+the installer is an unsigned script, which is why it is run as
+`powershell -ExecutionPolicy Bypass -File install.ps1`.
+
+If you would rather not hand that over, there are two other ways in. Unpack the
+archive yourself and clear the flag by hand — the same command, run by you
+instead of by a script. Or build it: see [Building](#building) above.
+
+Every archive has its own `.sha256` lying beside it in the
+[release folder](https://github.com/xsm909/xverb-release/tree/main/release).
+That file is the published sum, and it is the one the installer checks against
+when it fetches a release itself. Check it before you run anything:
+
+```
+shasum -a 256 xverb-*-macos-arm64.tar.gz                    # macOS
+sha256sum xverb-*-linux-x64.tar.gz                          # Linux
+Get-FileHash xverb-*-windows-x64.zip -Algorithm SHA256      # Windows
+```
+
+Meant to come next, with no date on any of it: an ad-hoc signature on the macOS
+bundle, then a real one and notarisation, then a signed Windows installer.
 
 | | Run as yourself | Run elevated |
 | --- | --- | --- |
@@ -145,10 +191,8 @@ elevated changes nothing but the account it installs for.
 To remove it, `sh install.sh --uninstall` or `install.ps1 -Uninstall`.
 Settings, connections and installed plugins are left in place.
 
-The bundles are not signed or notarised, so the installer clears the quarantine
-flag on the copy it installs — without that macOS would refuse to open it at
-all. The whole of it, including the one-line install and portable installs, is
-in [docs/install.md](docs/install.md).
+The whole of it, including the one-line install and portable installs, is in
+[docs/install.md](docs/install.md).
 
 
 ## Extensions
@@ -162,8 +206,8 @@ plugins directory shown on that page.
 
 **Bundled** extensions ship inside the app and can be switched off but not
 deleted. Those are the declarative viewers only — text, Markdown, image, table
-and JSON — because pure data loads on every platform, including the ones where
-running plugin code is impossible. Everything with code in it, FTP and SMB
+and JSON — because pure data needs nothing the platform has to allow, which is
+what the platforms where running plugin code is impossible require. Everything with code in it, FTP and SMB
 included, comes from the collection.
 
 Two directories are searched for installed plugins: the app's support
