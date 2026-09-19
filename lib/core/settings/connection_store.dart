@@ -229,6 +229,47 @@ class ConnectionStore extends ChangeNotifier {
           .where((c) => c.specId == spec.id)
           .toList();
 
+  /// [path] with the password of the saved connection it belongs to, where it
+  /// arrived without one — a place read back from a file that may not hold a
+  /// password (backlog 142): the folder history, where a panel was left.
+  ///
+  /// Unchanged when it carries one already, when it is not a connection's, or
+  /// when no saved connection with that login is found; the transport then
+  /// asks, as it does for a connection that keeps no password.
+  VfsPath withSecret(VfsPath path) => withSecretFrom(all, path);
+
+  /// [withSecret] over [connections] — the store's own list, or a test's.
+  @visibleForTesting
+  static VfsPath withSecretFrom(
+    Iterable<SavedConnection> connections,
+    VfsPath path,
+  ) {
+    final archive = path.archiveHost;
+    if (archive != null) {
+      final full = withSecretFrom(connections, archive);
+      return identical(full, archive) ? path : path.withArchiveHost(full);
+    }
+    final uri = path.uri;
+    if (path.scheme == VfsPath.localScheme || uri.host.isEmpty) return path;
+    final login = uri.userInfo;
+    if (login.isEmpty || login.contains(':')) return path;
+    for (final connection in connections) {
+      if (connection.scheme != path.scheme) continue;
+      // Matched on everything but the password, so the one password ever
+      // revealed is the one that belongs here.
+      final bare = connection.toPath(password: '').uri;
+      if (bare.host.toLowerCase() != uri.host.toLowerCase() ||
+          bare.port != uri.port ||
+          bare.userInfo != login) {
+        continue;
+      }
+      final credential = connection.toPath().uri.userInfo;
+      if (!credential.contains(':')) return path;
+      return VfsPath(uri.replace(userInfo: credential));
+    }
+    return path;
+  }
+
   Future<void> initialize() async {
     final support = await getApplicationSupportDirectory();
     _directory = Directory(p.join(support.path, 'connections'));

@@ -262,13 +262,29 @@ class ColourSchemeLibrary {
   /// breaks: which palette is on is matched on the recipe, never on a stored
   /// name.
   ///
-  /// Light first, and *Xverb Light* first of all, because it is what the
-  /// application opens in: the defaults in `AppearanceSettings` are these three
-  /// seeds, so that row is the way back after anything has been pressed.
+  /// **The release's own palette first**, because it is what the application
+  /// opens in: the defaults in `AppearanceSettings` are its seeds, so that row
+  /// is the way back after anything has been pressed. A release is named after
+  /// a place and carries his photograph of it on the About card, and the
+  /// default appearance is the palette that goes with that picture — so each
+  /// new place brings a palette, it goes here, and the defaults move to it.
   ///
   /// Not `const`: a recipe holds a map, and a map is not a constant expression.
   /// Built once, at first use.
   static final List<ColourScheme> builtIn = [
+    // ---- the release -----------------------------------------------------
+    // **Iceland**, for the glacier on the About card: dark water, and the teal
+    // of the ice. It was shipped as *Lagoon*, three seeds and nothing pressed,
+    // before it became the release's palette and the defaults in 1.1.0.476.
+    ColourScheme.palette(
+      name: 'Iceland',
+      seeds: const PaletteSeeds(
+        paper: Color(0xFF0C1A1A),
+        chrome: Color(0xFF081313),
+        accent: Color(0xFF2DD4BF),
+      ),
+    ),
+
     // ---- light -----------------------------------------------------------
     ColourScheme.palette(
       name: 'Xverb Light',
@@ -400,14 +416,6 @@ class ColourSchemeLibrary {
         paper: Color(0xFF17101F),
         chrome: Color(0xFF100B16),
         accent: Color(0xFFC084FC),
-      ),
-    ),
-    ColourScheme.palette(
-      name: 'Lagoon',
-      seeds: const PaletteSeeds(
-        paper: Color(0xFF0C1A1A),
-        chrome: Color(0xFF081313),
-        accent: Color(0xFF2DD4BF),
       ),
     ),
   ];

@@ -17,6 +17,7 @@ import '../../core/vfs/shell_open.dart';
 import '../dialogs/common_dialogs.dart';
 import '../dialogs/plugin_settings_dialog.dart';
 import '../notice.dart';
+import '../plugins/plugin_about.dart';
 import '../plugins/plugin_icons.dart';
 import '../plugins/plugin_table.dart' show appearanceOf;
 import '../text_scale.dart';
@@ -25,10 +26,9 @@ import 'settings_group.dart';
 import '../widgets/title_bar_plugins.dart';
 import '../widgets/x_button.dart';
 import '../widgets/hint.dart';
+import '../../core/plugins/built_in_source.dart';
 
-/// The collection the app knows about without being told. A constant rather
-/// than a stored setting, so it cannot be lost and needs no migration.
-const String kBuiltInPluginSource = 'xsm909/xverb-plugins';
+export '../../core/plugins/built_in_source.dart' show kBuiltInPluginSource;
 
 /// The plugin manager: one feed of everything, searchable.
 ///
@@ -1111,6 +1111,18 @@ class _Actions extends StatelessWidget {
             tone: XButtonTone.filled,
             onPressed: onUpdate,
           ),
+        // Every plugin has an answer to this one: a version, and whatever its
+        // CHANGES.md says. The same window a plugin's own page opens with F1,
+        // and here for the plugins that have no page — a transport, an
+        // archive.
+        Hint(
+          message: tr('About {name}', {'name': manifest.displayName}),
+          child: IconButton(
+            icon: const Icon(Icons.help_outline, size: 18),
+            onPressed: () =>
+                unawaited(showPluginAbout(context, manifest: manifest)),
+          ),
+        ),
         // Only when there is something in the window: the plugin's own
         // settings, or the choice of where its commands appear. An icon that
         // opens an empty window teaches people not to press it.

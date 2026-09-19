@@ -4,7 +4,7 @@ repository: https://github.com/xsm909/xverb
 publish_to: 'none'
 
 # Build number is bumped once per development run — see lib/core/version.dart.
-version: 1.0.0+448
+version: 1.1.0+497
 
 environment:
   sdk: ^3.12.2

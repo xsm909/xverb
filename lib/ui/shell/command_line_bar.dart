@@ -29,6 +29,23 @@ import '../windows/window_dialogs.dart';
 /// that had nothing to do with the command line.
 const Key commandLineFieldKey = Key('commandLine.field');
 
+/// Whether the command line has anything to do where a panel stands.
+///
+/// **Not on a network location** — asked for on 2026-09-12. A shell runs in a
+/// folder of this machine, and on a share or a server there is none to run in:
+/// the line could only print the address, and the address it printed carried
+/// the login and the password. An archive is judged by where it lies, so a zip
+/// on this disk keeps the line and a zip on a share does not. No location at
+/// all keeps it too.
+bool commandLineServes(VfsPath? location) {
+  if (location == null) return true;
+  var ground = location;
+  while (ground.archiveHost != null) {
+    ground = ground.archiveHost!;
+  }
+  return ground.scheme == VfsPath.localScheme;
+}
+
 class CommandLineBar extends StatelessWidget {
   const CommandLineBar({
     super.key,

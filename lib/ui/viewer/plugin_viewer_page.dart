@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -19,10 +21,12 @@ import '../motion.dart';
 import '../notice.dart';
 import '../plugins/mesh3d_view.dart';
 import '../plugins/node_graph_view.dart';
+import '../plugins/plugin_about.dart';
 import '../plugins/plugin_form.dart';
 import '../plugins/plugin_table.dart';
 import '../plugins/split_view.dart';
 import '../plugins/sunburst_chart.dart';
+import '../sheet/sheet_view.dart';
 import '../widgets/context_menu.dart';
 import '../widgets/escape_to_pop.dart';
 import '../widgets/keyboard_scrollable.dart';
@@ -34,6 +38,7 @@ import 'code_syntax.dart';
 import 'diff_syntax.dart';
 import 'content_swap.dart';
 import 'facts_panel.dart';
+import 'bottom_inset.dart';
 import 'film_strip.dart';
 import 'image_view.dart';
 import 'json_syntax.dart';
@@ -123,6 +128,10 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
   /// the setting is written when it is toggled.
   late bool _strip;
 
+  /// How tall the strip was last laid out — what a reading with a line along
+  /// its bottom is told to stand clear of while the strip is up.
+  final ValueNotifier<double> _stripHeight = ValueNotifier(0);
+
   /// The reach into the structure panel, which the content view holds — see
   /// [StructureHandle]. The page keeps a button and an Escape, not a panel.
   final StructureHandle _structure = StructureHandle();
@@ -136,18 +145,11 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
       fileSystems: app.fileSystems,
       // Whoever opens the file is who can draw it. Asked only about a file the
       // machine's own decoder has already refused — see [ThumbnailCache].
-      askPlugin: (entry, pixels) async {
-        for (final viewer in app.plugins.viewersFor(
-          entry.typeName,
-          name: entry.name,
-        )) {
-          final ask = viewer.thumbnail;
-          if (ask == null) continue;
-          final small = await ask(entry.path, pixels);
-          if (small != null && small.isNotEmpty) return small;
-        }
-        return null;
-      },
+      askPlugin: (entry, pixels) => askViewers(
+        app.plugins.viewersFor(entry.typeName, name: entry.name),
+        entry.path,
+        pixels,
+      ),
     );
     _strip = context.read<SettingsStore>().filmStripOpen;
     _findDescriber();
@@ -193,7 +195,34 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
       ..removeListener(_structureMoved)
       ..dispose();
     _thumbnails.dispose();
+    _stripHeight.dispose();
+    _slow?.cancel();
     super.dispose();
+  }
+
+  /// [page] with a line across the top of it while the next file is being read.
+  ///
+  /// Over the page rather than instead of it: what was on screen stays legible,
+  /// and the sign of work is the one thing added. An indeterminate bar and not
+  /// a percentage, for the reason [_Loading] gives — the plugin reading the
+  /// file in its own process has no way to say how far it has got.
+  Widget _stillReading(AppearanceSettings theme, Widget page) {
+    if (!_reading) return page;
+    return Stack(
+      children: [
+        page,
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: LinearProgressIndicator(
+            minHeight: 2,
+            backgroundColor: Colors.transparent,
+            color: theme.readingForeground.withValues(alpha: 0.5),
+          ),
+        ),
+      ],
+    );
   }
 
   /// Offers the other viewers that claimed this file, under the button.
@@ -225,17 +254,50 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     _load();
   }
 
+  /// Whether the file on screen is being replaced by one that is taking long
+  /// enough to be worth saying so about, and the timer that decides "long
+  /// enough".
+  ///
+  /// **Both halves matter.** Walking a folder of photographs with an arrow key
+  /// opens each between two frames, and a sign of work that appeared for every
+  /// one of them would be a flicker per press — which is why [_goTo] leaves the
+  /// picture on screen in the first place. A model is the other case entirely:
+  /// ten seconds of an unchanged picture, with only the name in the title bar
+  /// having moved, reads as a press that did nothing. So nothing is shown for
+  /// the first fifth of a second, and after that the page says plainly that it
+  /// is reading.
+  bool _reading = false;
+  Timer? _slow;
+
+  static const Duration _beforeSaying = Duration(milliseconds: 200);
+
+  void _sayNothingYet() {
+    _slow?.cancel();
+    _slow = Timer(_beforeSaying, () {
+      if (mounted) setState(() => _reading = true);
+    });
+  }
+
+  void _doneReading() {
+    _slow?.cancel();
+    _slow = null;
+    if (mounted && _reading) setState(() => _reading = false);
+  }
+
   Future<void> _load() async {
     final viewer = _viewer;
+    _sayNothingYet();
     try {
       final entry = _entry;
       final content = await viewer.open(entry.path);
       // A slow viewer may finish after the user switched away from it — to
       // another viewer, or to another file.
       if (mounted && viewer.id == _viewer.id && entry.path == _entry.path) {
+        _doneReading();
         setState(() => _content = content);
       }
     } on Object catch (failure) {
+      _doneReading();
       if (mounted && viewer.id == _viewer.id) {
         // In the application's own words — see [saidPlainly]. The page used to
         // show the exception's class name and its errno, which is true and is
@@ -328,6 +390,10 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    if (isPluginAboutKey(event)) {
+      unawaited(_showAbout());
+      return KeyEventResult.handled;
+    }
     final keys = HardwareKeyboard.instance;
     if (keys.isControlPressed || keys.isMetaPressed || keys.isAltPressed) {
       return KeyEventResult.ignored;
@@ -361,6 +427,14 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
         return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  /// The plugin drawing the page, its version and its latest changes.
+  Future<void> _showAbout() async {
+    final manifest =
+        context.read<AppState>().plugins.manifestOf(_viewer.pluginId);
+    if (manifest == null) return;
+    await showPluginAbout(context, manifest: manifest);
   }
 
   /// Whether the strip is actually on screen: it is asked for, and there is
@@ -455,6 +529,22 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                       onPressed: () => _chooseViewer(context),
                     ),
                   ),
+                // Which plugin is reading this, and what changed in it. Beside
+                // the eye because both are about the viewer rather than the
+                // file, and there whether or not the eye is: one viewer is
+                // still a plugin with a version.
+                TitleBarButton(
+                  icon: Icons.help_outline,
+                  tooltip: '${tr('About {name}', {
+                    'name': context
+                            .read<AppState>()
+                            .plugins
+                            .manifestOf(_viewer.pluginId)
+                            ?.displayName ??
+                        _viewer.pluginName,
+                  })}  F1',
+                  onPressed: () => unawaited(_showAbout()),
+                ),
               ],
             ),
             Expanded(
@@ -462,11 +552,10 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
               // with" picker, a question — floats over the page rather than
               // behind it. Only the front-most page draws the stack.
               child: ViewerZoomMode(
-                // How a picture opens here, and where a change to it is
-                // written down. A photograph fills the window by default: they
-                // are all bigger than they are shown, and the window is the
-                // frame. Fit — which never enlarges — is still one press away
-                // and is what everything outside a viewer page keeps.
+                // What the reader last pressed, and where a new press is
+                // written down. Nothing pressed yet is null rather than a
+                // mode: a picture then opens one pixel to one pixel and a
+                // drawing fills the window, each by its own canvas's default.
                 mode: ZoomMode.byName(settings.viewerZoomMode),
                 onChanged: (mode) => settings.setViewerZoomMode(mode.name),
                 child: FolderWalk(
@@ -483,7 +572,9 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                 stack: context.read<AppState>().windows,
                 child: Scaffold(
                   backgroundColor: Colors.transparent,
-                  body: content == null
+                  body: _stillReading(
+                    theme,
+                    content == null
                       // **It says what it is doing, and to what.** A bare
                       // spinner on an empty page is the same picture whether a
                       // file opens in a frame or takes ten seconds — measured:
@@ -518,11 +609,19 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                                 child: ContentSwap(
                                   child: KeyedSubtree(
                                     key: ObjectKey(content),
-                                    child: PluginContentView(
-                                      content: content,
-                                      pluginId: _viewer.pluginId,
-                                      structure: _structure,
-                                      facts: _describer,
+                                    child: ValueListenableBuilder<double>(
+                                      valueListenable: _stripHeight,
+                                      builder: (context, height, view) =>
+                                          ViewerBottomInset(
+                                            inset: _stripShowing ? height : 0,
+                                            child: view!,
+                                          ),
+                                      child: PluginContentView(
+                                        content: content,
+                                        pluginId: _viewer.pluginId,
+                                        structure: _structure,
+                                        facts: _describer,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -564,7 +663,10 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                                         kFilmStripDuration,
                                       ),
                                       curve: kBothCurve,
-                                      child: FilmStrip(
+                                      child: MeasuredSize(
+                                        onSize: (size) =>
+                                            _stripHeight.value = size.height,
+                                        child: FilmStrip(
                                         entries: _neighbours,
                                         current: _indexIn(_neighbours),
                                         thumbnails: _thumbnails,
@@ -574,8 +676,11 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                                         fold: StripFold.named(
                                           settings.filmStripFold,
                                         ),
+                                        grammarOf: (entry) =>
+                                            _grammarForFile(context, entry),
                                         onPick: (index) =>
                                             _goTo(_neighbours[index]),
+                                      ),
                                       ),
                                     ),
                                   ),
@@ -583,6 +688,7 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                             ],
                           ),
                         ),
+                  ),
                 ),
                   ),
                 ),
@@ -671,6 +777,20 @@ SyntaxGrammar? _grammarFor(BuildContext context, String? language) {
   if (language == null || language.isEmpty) return null;
   try {
     return context.read<AppState>().plugins.grammarFor(language);
+  } on ProviderNotFoundException {
+    return null;
+  }
+}
+
+/// The grammar a neighbour on the strip is written in, going by its name — for
+/// the page a file with no picture is drawn as. Null in the same ordinary cases
+/// as [_grammarFor].
+SyntaxGrammar? _grammarForFile(BuildContext context, FileEntry entry) {
+  try {
+    return context.read<AppState>().plugins.grammarForExtension(
+      entry.extension,
+      name: entry.name,
+    );
   } on ProviderNotFoundException {
     return null;
   }
@@ -1322,6 +1442,20 @@ class _PluginContentViewState extends State<PluginContentView> {
           onMark:
               widget.onMarkRow == null ? null : (row) => widget.onMarkRow!(row, part, null),
           onButton: widget.onButton == null ? null : (id) => widget.onButton!(id, const {}),
+        );
+
+      case ViewerContentKind.sheet:
+        final source = content.sheet;
+        if (source == null) {
+          return _Centered(
+            icon: Icons.grid_on_outlined,
+            message: tr('Nothing to show.'),
+          );
+        }
+        return SheetView(
+          source: source,
+          isActive: widget.isActive && widget.focusedPart == part,
+          hasKeyboard: _readingTakesKeys(part),
         );
 
       case ViewerContentKind.table:

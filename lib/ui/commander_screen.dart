@@ -47,6 +47,7 @@ import 'dialogs/connection_dialog.dart';
 import 'dialogs/pack_dialog.dart';
 import 'update/update_offer_window.dart';
 import 'dialogs/connection_manager_dialog.dart';
+import 'motion.dart';
 import 'shell/command_line_bar.dart';
 import 'dialogs/progress_dialog.dart';
 import 'dialogs/reading_window.dart';
@@ -119,8 +120,16 @@ class _CommanderScreenState extends State<CommanderScreen>
   final GlobalKey _leftCursorKey = GlobalKey(debugLabel: 'left cursor row');
   final GlobalKey _rightCursorKey = GlobalKey(debugLabel: 'right cursor row');
 
+  /// The clocks at the end of the path bars, so F12 hangs the history off the
+  /// same place the pointer does.
+  final GlobalKey _leftHistoryClockKey = GlobalKey(debugLabel: 'left clock');
+  final GlobalKey _rightHistoryClockKey = GlobalKey(debugLabel: 'right clock');
+
   /// Whose location menu is open, so its pill stays lit.
   PanelController? _locationMenuPanel;
+
+  /// The panel whose path-bar clock the history is hanging off, while it is.
+  PanelController? _historyMenuPanel;
 
   /// Says so when a panel has been reading for longer than a moment — an
   /// archive being unpacked far enough to list, a folder the system asks about
@@ -222,8 +231,18 @@ class _CommanderScreenState extends State<CommanderScreen>
 
   /// The front window owns the keyboard while it is open, so the panels take it
   /// back the moment the last one closes.
+  ///
+  /// **Only when the panels are what is on screen.** A window opened over a
+  /// viewer, a tool or the settings is in the same stack, and taking the
+  /// keyboard back to the panels when it closed sent every key after it to a
+  /// listing hidden under the page — which was the page not answering the
+  /// keyboard any more, until it was clicked. Over a page, the window's going
+  /// hands the keyboard back to what had it on that page, which the focus
+  /// scopes already do.
   void _onWindowsChanged() {
-    if (mounted && _windows.isEmpty) _keyboard.requestFocus();
+    if (!mounted || _windows.isNotEmpty) return;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
+    _keyboard.requestFocus();
   }
 
   AppState get _app => context.read<AppState>();
@@ -279,11 +298,16 @@ class _CommanderScreenState extends State<CommanderScreen>
                       // command line — so without this F11 changed the state
                       // and nothing above the strip was rebuilt.
                       child: ListenableBuilder(
-                        listenable: appState.commandLine,
+                        // The active panel too: walking onto a share takes the
+                        // console away, and a console that owned the window
+                        // must give the panels back when it goes.
+                        listenable: Listenable.merge(
+                            [appState.commandLine, appState.active]),
                         builder: (context, _) {
                           final consoleOwnsIt =
                               appState.commandLine.consoleVisible &&
-                                  appState.commandLine.consoleFullScreen;
+                                  appState.commandLine.consoleFullScreen &&
+                                  commandLineServes(appState.active.location);
                           return Column(
                         children: [
                           if (!consoleOwnsIt)
@@ -343,7 +367,8 @@ class _CommanderScreenState extends State<CommanderScreen>
     required bool sideBySide,
   }) {
     final full = appState.commandLine.consoleVisible &&
-        appState.commandLine.consoleFullScreen;
+        appState.commandLine.consoleFullScreen &&
+        commandLineServes(appState.active.location);
     final theme = _settings.appearance;
 
     // **Two notifiers, because the strip draws from two.** The command line is
@@ -359,7 +384,76 @@ class _CommanderScreenState extends State<CommanderScreen>
     // runs under `context.watch<AppState>()`.
     final console = ListenableBuilder(
       listenable: Listenable.merge([appState.commandLine, appState.active]),
-      builder: (context, _) => Column(
+      builder: (context, _) {
+        // **Neither the line nor the console on a network location** — see
+        // [commandLineServes]. What is typed and whether the console was open
+        // are kept, and both come back with the next folder of this machine.
+        final serves = commandLineServes(appState.active.location);
+        final strip = serves
+            ? _commandStrip(appState, constraints, full: full)
+            : const SizedBox(
+                key: ValueKey('no-command-line'),
+                width: double.infinity,
+              );
+        // A console that owns the window does not fold: it only ever owns it
+        // on this machine, so there is nothing here for it to fold away from.
+        if (full) return strip;
+        // **Folded away, not cut** — rule two: nothing changes in one frame.
+        // The strip shrinks towards its bottom edge, as if going down behind
+        // the key bar under it, and fades as it goes; the panels above take
+        // the room as it is given up rather than all at once.
+        return AnimatedSwitcher(
+          duration: motionOf(context, kCommandLineFoldDuration),
+          switchInCurve: kBothCurve,
+          switchOutCurve: kBothCurve,
+          transitionBuilder: (child, animation) => SizeTransition(
+            sizeFactor: animation,
+            alignment: Alignment.bottomCenter,
+            child: FadeTransition(opacity: animation, child: child),
+          ),
+          child: strip,
+        );
+      },
+    );
+
+    return Column(
+      // Full screen the strip *is* the window, so it takes what there is
+      // rather than the height it was dragged to. Expanded around the console
+      // itself, because a column hands its children unbounded height and a
+      // flex child inside an unbounded column is an error rather than a
+      // stretch.
+      mainAxisSize: full ? MainAxisSize.max : MainAxisSize.min,
+      children: [
+        // What divides this from the panels: one hairline, the same one that
+        // runs under the menu and under the tabs. Here rather than on
+        // the console pane, because the strip starts with the command line
+        // when the console is closed.
+        Container(height: 1, color: theme.chromeRule),
+        if (full) Expanded(child: console) else console,
+        ExcludeFocus(
+          // Rebuilt when either panel moves, not when the application does.
+          // The keys say what can be done *where the panels are standing*, and
+          // walking into a commit is a change in the panel alone — without
+          // this the bar went on offering Delete until something else happened
+          // to redraw the screen.
+          child: ListenableBuilder(
+            listenable: Listenable.merge([appState.left, appState.right]),
+            builder: (context, _) =>
+                _CommandBar(compact: !sideBySide, actions: _actions()),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// The console, when it is open, and the command line under it.
+  Widget _commandStrip(
+    AppState appState,
+    BoxConstraints constraints, {
+    required bool full,
+  }) {
+        return Column(
+            key: const ValueKey('command-line'),
             mainAxisSize: full ? MainAxisSize.max : MainAxisSize.min,
             children: [
               if (appState.commandLine.consoleVisible)
@@ -396,37 +490,7 @@ class _CommanderScreenState extends State<CommanderScreen>
                 onDismiss: _endCommandEditing,
               ),
             ],
-          ),
-    );
-
-    return Column(
-      // Full screen the strip *is* the window, so it takes what there is
-      // rather than the height it was dragged to. Expanded around the console
-      // itself, because a column hands its children unbounded height and a
-      // flex child inside an unbounded column is an error rather than a
-      // stretch.
-      mainAxisSize: full ? MainAxisSize.max : MainAxisSize.min,
-      children: [
-        // What divides this from the panels: one hairline, the same one that
-        // runs under the menu and under the tabs. Here rather than on
-        // the console pane, because the strip starts with the command line
-        // when the console is closed.
-        Container(height: 1, color: theme.chromeRule),
-        if (full) Expanded(child: console) else console,
-        ExcludeFocus(
-          // Rebuilt when either panel moves, not when the application does.
-          // The keys say what can be done *where the panels are standing*, and
-          // walking into a commit is a change in the panel alone — without
-          // this the bar went on offering Delete until something else happened
-          // to redraw the screen.
-          child: ListenableBuilder(
-            listenable: Listenable.merge([appState.left, appState.right]),
-            builder: (context, _) =>
-                _CommandBar(compact: !sideBySide, actions: _actions()),
-          ),
-        ),
-      ],
-    );
+          );
   }
 
   /// The panels sit flush against each other. A spacer between them showed the
@@ -531,6 +595,11 @@ class _CommanderScreenState extends State<CommanderScreen>
     locationMenuOpen: identical(_locationMenuPanel, controller),
     onOpenLocations: (anchor) =>
         unawaited(_showLocationMenu(controller, anchor)),
+    onOpenHistory: (anchor) =>
+        unawaited(_showHistoryMenu(controller, anchor)),
+    historyMenuOpen: identical(_historyMenuPanel, controller),
+    hasHistory: () => _historyNodes(controller).isNotEmpty,
+    historyClockKey: isLeft ? _leftHistoryClockKey : _rightHistoryClockKey,
     onDragOut: (from, sources) => unawaited(_dragOut(from, sources)),
     onDropFiles: _dropFiles,
   );
@@ -1004,7 +1073,12 @@ class _CommanderScreenState extends State<CommanderScreen>
     return KeyEventResult.handled;
   }
 
+  /// Whether the active panel stands somewhere the command line serves — see
+  /// [commandLineServes].
+  bool get _commandLineHere => commandLineServes(_app.active.location);
+
   Future<void> _pasteIntoCommandLine() async {
+    if (!_commandLineHere) return;
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text == null || text.isEmpty) return;
@@ -1096,7 +1170,9 @@ class _CommanderScreenState extends State<CommanderScreen>
       case LogicalKeyboardKey.numpadEnter:
         // A typed command takes precedence over the cursor row, as in
         // Total Commander.
-        if (!_app.commandLine.isEmpty) {
+        // Not where the line is hidden: a command typed before walking onto a
+        // share is kept, and must not run unseen.
+        if (_commandLineHere && !_app.commandLine.isEmpty) {
           unawaited(_runCommand());
         } else {
           unawaited(_activate(panel));
@@ -1105,8 +1181,9 @@ class _CommanderScreenState extends State<CommanderScreen>
         // Always the command line, never "up a level". One key meaning two
         // things depending on whether anything had been typed was a key nobody
         // could predict: it edited the line when there was a line and walked out
-        // of the folder when there was not. Going up is Ctrl+PageUp.
-        _app.commandLine.backspace();
+        // of the folder when there was not. Going up is Ctrl+PageUp. Nothing
+        // at all where the line is hidden.
+        if (_commandLineHere) _app.commandLine.backspace();
 
       case LogicalKeyboardKey.insert:
         // Shift+Insert is the older of the two pastes and the one a commander
@@ -1120,7 +1197,7 @@ class _CommanderScreenState extends State<CommanderScreen>
       case LogicalKeyboardKey.space:
         // Once a command is being typed, space belongs to it. With an empty
         // command line it marks and measures, the way Total Commander does.
-        if (!_app.commandLine.isEmpty) {
+        if (_commandLineHere && !_app.commandLine.isEmpty) {
           _app.commandLine.insert(' ');
         } else {
           panel.toggleMarkAtCursor(advance: false, measureDirectory: true);
@@ -1179,6 +1256,10 @@ class _CommanderScreenState extends State<CommanderScreen>
       // another one has been pressed is a key that looks broken.
       case LogicalKeyboardKey.f11:
         _app.commandLine.toggleConsoleFullScreen();
+      // The folder history, which until this had no key at all: the clock that
+      // opens it comes out only under the pointer. See [_openHistoryByKey].
+      case LogicalKeyboardKey.f12:
+        unawaited(_openHistoryByKey(panel));
 
       default:
         final typed = _printableOf(event, key);
@@ -1194,8 +1275,12 @@ class _CommanderScreenState extends State<CommanderScreen>
         // as it always has, and the search waits for its chord.
         if (_searchOpener == QuickSearchOpener.typing && _takesTypedText(typed)) {
           _startSearch(typed);
-        } else {
+        } else if (_commandLineHere) {
           _app.commandLine.insert(typed);
+        } else {
+          // No command line where the panel stands, so a letter has nowhere
+          // to go — and is not swallowed on its way to nowhere either.
+          return KeyEventResult.ignored;
         }
         return KeyEventResult.handled;
     }
@@ -2088,8 +2173,9 @@ class _CommanderScreenState extends State<CommanderScreen>
     ];
   }
 
-  /// The History submenu: the folders visited most often, then the ones
-  /// visited last.
+  /// The history's rows for [target]: the folders the time went into, then
+  /// the way to add this one and the way to clear the lot. Shared by the
+  /// History submenu and the clock on the path bar, so the two cannot differ.
   ///
   /// **One list, and it is where the time went.** It was two for a day, with a
   /// chronological *where was I just now* underneath, and that one is gone.
@@ -2097,12 +2183,25 @@ class _CommanderScreenState extends State<CommanderScreen>
   /// everywhere worth going back to, and a second list of the same folders in
   /// another order is a second list to read.
   ///
-  /// Nothing at all until there is something to show. A submenu offering an
-  /// empty list is a row that has to be opened to learn there is nothing in it.
-  List<MenuNode> _historyGroup(PanelController target) {
+  /// Nothing at all while there is nothing to show and nothing to add. A
+  /// submenu offering an empty list is a row that has to be opened to learn
+  /// there is nothing in it.
+  List<MenuNode> _historyNodes(PanelController target) {
     final history = _app.history;
     final favourites = history.favourites;
-    if (favourites.isEmpty) return const [];
+    // This panel's folder, where it is one: a virtual listing is a question
+    // somebody asked rather than a place, and the history never holds one.
+    final here = target.isVirtual ? null : target.location;
+    // Asked again on every frame the menu draws, not once when it opens: a
+    // cross on this folder's own row is exactly what makes it true while the
+    // menu is still open.
+    // Compared without the password: the history holds none, and the panel's
+    // own location still does.
+    bool addable() =>
+        here != null &&
+        history.canPin &&
+        !history.favourites.contains(here.withoutPassword);
+    if (favourites.isEmpty && !addable()) return const [];
 
     // **Nothing is written on a row but the name.** A count was drawn there for
     // one build and taken out again, and the same goes for a time. The menu is
@@ -2128,12 +2227,10 @@ class _CommanderScreenState extends State<CommanderScreen>
       // is ten, so ten pins is a list with nothing else in it, and that is the
       // point of pinning.
       isPinned: () => history.isPinned(where),
-      // **Dragged into whatever order is wanted**, which only the pinned ones
-      // have: the rest are ranked by time, and a hand-placed row among them
-      // would jump the next time somebody worked somewhere.
-      onDragged: history.isPinned(where)
-          ? (rows) => unawaited(history.movePin(where, by: rows))
-          : null,
+      // **Dragged into whatever order is wanted**, any row of it: a row put
+      // somewhere by hand is pinned there with every row above it, and a pin
+      // carried below the rest is let go — see [FolderHistory.place].
+      onDragged: (rows) => unawaited(history.place(where, by: rows)),
       onPin: history.isPinned(where) || history.canPin
           ? () => unawaited(
               history.pin(where, pinned: !history.isPinned(where)),
@@ -2146,20 +2243,103 @@ class _CommanderScreenState extends State<CommanderScreen>
     );
 
     return [
-      MenuGroup(tr('History'), [
         for (final where in favourites) row(where),
-        const MenuSeparator(),
+        if (favourites.isNotEmpty) const MenuSeparator(),
+        // **This folder, when it is not in the list** — under the rule, with
+        // the other thing done *to* the list rather than with it. Added
+        // pinned: somebody who puts a folder there by hand has said where it
+        // belongs, and one left to earn its minute would not even show.
+        if (here != null)
+          MenuItem(
+            tr('Add “{name}” to the history', {'name': here.label}),
+            icon: Icons.add,
+            keywords: const ['add', 'pin', 'remember'],
+            hint: here.display,
+            isShown: addable,
+            onSelected: () => unawaited(history.pin(here, pinned: true)),
+          ),
         MenuItem(
           tr('Clear the history'),
           icon: Icons.delete_sweep_outlined,
           keywords: const ['forget', 'empty', 'reset'],
+          // Nothing to clear is nothing to offer.
+          isShown: () => !history.isEmpty,
           // The times as well as the list: a cleared history that still ranked
           // by where you used to work would not be cleared.
           onSelected: () => unawaited(history.clear()),
         ),
-      ], icon: Icons.history),
+    ];
+  }
+
+  /// The History submenu of the location menu — [_historyNodes] under a row
+  /// of their own, and nothing at all when there is nothing in them.
+  List<MenuNode> _historyGroup(PanelController target) {
+    final rows = _historyNodes(target);
+    if (rows.isEmpty) return const [];
+    return [
+      MenuGroup(tr('History'), rows, icon: Icons.history),
       const MenuSeparator(),
     ];
+  }
+
+  /// The history, dropped under the clock at the end of [panel]'s path bar —
+  /// the quick way back to a folder, opened by resting the pointer on it.
+  ///
+  /// The same rows as the History submenu, a level nearer: going to a folder
+  /// is the one thing the clock is for, so the rows are the menu rather than
+  /// a row inside one. Choosing a folder takes [panel] there.
+  Future<void> _showHistoryMenu(PanelController panel, Rect anchor) async {
+    final nodes = _historyNodes(panel);
+    if (nodes.isEmpty || _historyMenuPanel != null) return;
+    _app.activate(panel);
+    setState(() => _historyMenuPanel = panel);
+    try {
+      await showAppContextMenu(
+        context: context,
+        anchorRect: anchor,
+        style: menuAppearanceFrom(_settings.appearance),
+        nodes: nodes,
+        searchHint: tr('Search the history'),
+      );
+    } finally {
+      if (mounted) setState(() => _historyMenuPanel = null);
+    }
+    if (mounted) _keyboard.requestFocus();
+  }
+
+  /// F12: [panel]'s history, hanging off the clock at the end of its path bar
+  /// exactly as the pointer opens it.
+  ///
+  /// **Rule one**: the clock was the only way in, and it comes out only while
+  /// the pointer is on the bar — so from the keyboard the history did not
+  /// exist. The clock comes out here as well, lit under the menu, so the key
+  /// and the pointer open the same thing in the same place; the menu hangs
+  /// where the clock will stand rather than waiting for it to grow there.
+  Future<void> _openHistoryByKey(PanelController panel) async {
+    if (_historyNodes(panel).isEmpty) return;
+    final key = identical(panel, _app.left)
+        ? _leftHistoryClockKey
+        : _rightHistoryClockKey;
+    final clock = key.currentContext?.findRenderObject() as RenderBox?;
+    final Rect anchor;
+    if (clock != null && clock.hasSize) {
+      // At no width while it is put away, so its right edge is where the
+      // clock ends once it is out.
+      final end = clock.localToGlobal(Offset(clock.size.width, 0));
+      anchor = Rect.fromLTWH(
+        end.dx - FilePanel.historyClockWidth,
+        end.dy,
+        FilePanel.historyClockWidth,
+        clock.size.height,
+      );
+    } else {
+      // No clock where the panel is — something else has it. The pill is the
+      // honest place to hang a menu about where this panel has been.
+      final pill = _pillBoxOf(panel);
+      if (pill == null) return;
+      anchor = pill.localToGlobal(Offset.zero) & pill.size;
+    }
+    await _showHistoryMenu(panel, anchor);
   }
 
   /// Drops the location menu under [anchor] — the pill's own rectangle, so it
@@ -2607,13 +2787,14 @@ class _CommanderScreenState extends State<CommanderScreen>
       tr('Key bindings'),
       icon: Icons.keyboard_outlined,
       keywords: const ['shortcuts', 'hotkeys', 'about'],
-      onSelected: () => unawaited(_openSettings()),
+      onSelected: () =>
+          unawaited(_openSettings(at: SettingsPlace.keyBindings)),
     ),
     MenuItem(
       tr('Plugins'),
       icon: Icons.extension_outlined,
       keywords: const ['extensions', 'python', 'declarative'],
-      onSelected: () => unawaited(_openSettings()),
+      onSelected: () => unawaited(_openSettings(at: SettingsPlace.plugins)),
     ),
     const MenuSeparator(),
     MenuItem(
@@ -2622,6 +2803,16 @@ class _CommanderScreenState extends State<CommanderScreen>
       keywords: const ['release', 'notes', 'changes', 'version'],
       onSelected: () => unawaited(ShellOpen.open(kReleasesUrl)),
     ),
+    // The application looks by itself every four hours, so this is rarely
+    // needed. It is here for the person who knows a build was just put out
+    // and does not want to wait for the next look to find it.
+    if (!Platform.isAndroid && !Platform.isIOS)
+      MenuItem(
+        tr('Check for updates'),
+        icon: Icons.system_update_alt_outlined,
+        keywords: const ['update', 'upgrade', 'release', 'version', 'newer'],
+        onSelected: () => unawaited(_checkForUpdateNow()),
+      ),
     const MenuSeparator(),
     MenuItem(
       tr('About {app}', {'app': kAppTitle}),
@@ -3348,7 +3539,7 @@ class _CommanderScreenState extends State<CommanderScreen>
       tr('No viewer plugin handles {what}.', {'what': extension}),
       long: true,
       actionLabel: tr('Plugins'),
-      onAction: () => unawaited(_openSettings()),
+      onAction: () => unawaited(_openSettings(at: SettingsPlace.plugins)),
     );
   }
 
@@ -3562,22 +3753,8 @@ class _CommanderScreenState extends State<CommanderScreen>
 
   /// What the user typed into "Copy as": a whole path, or a bare name meaning a
   /// file in [fallbackDirectory].
-  VfsPath? _resolveDestination(String typed, VfsPath fallbackDirectory) {
-    if (typed.contains('://')) return VfsPath.parse(typed);
-
-    final looksLikeAPath = Platform.isWindows
-        ? RegExp(r'^([A-Za-z]:[\\/]|\\\\)').hasMatch(typed)
-        : typed.startsWith('/');
-    if (looksLikeAPath) return VfsPath.local(typed);
-
-    // A name, or a relative path below the folder shown.
-    var result = fallbackDirectory;
-    for (final segment in typed.split(RegExp(r'[\\/]'))) {
-      if (segment.isEmpty || segment == '.') continue;
-      result = segment == '..' ? (result.parent ?? result) : result.child(segment);
-    }
-    return result == fallbackDirectory ? null : result;
-  }
+  VfsPath? _resolveDestination(String typed, VfsPath fallbackDirectory) =>
+      resolveTypedDestination(typed, fallbackDirectory);
 
   Future<void> _transfer({required bool move}) async {
     final source = _app.active;
@@ -3847,41 +4024,101 @@ class _CommanderScreenState extends State<CommanderScreen>
   /// Nothing is downloaded by the looking, and nothing is installed without an
   /// answer — the three answers and how long each of them lasts are
   /// [UpdatePrompt].
-  Future<void> _offerUpdateWhenDue() async {
+  Future<void> _offerUpdateWhenDue() => _offerUpdate(asked: false);
+
+  /// Help → Check for updates: the same look, because somebody asked for it.
+  ///
+  /// **Three things differ, and they are the whole difference between a check
+  /// nobody asked for and one somebody did.** It looks now, whether or not a
+  /// look is due. It says what it found, whichever of the four answers that is
+  /// — a check by itself tells nobody anything, and one that was asked for is
+  /// owed an answer, "this is the newest" included. And it offers what it
+  /// finds even where the person said to stay on an older one, or to be
+  /// reminded tomorrow: those answers were about not being interrupted, and a
+  /// question somebody asked is not an interruption.
+  Future<void> _checkForUpdateNow() => _offerUpdate(asked: true);
+
+  /// Whether a look is under way. The four-hourly tick and the menu can meet,
+  /// and two looks at once would be two offers of the same build.
+  bool _lookingForUpdate = false;
+
+  Future<void> _offerUpdate({required bool asked}) async {
     if (Platform.isAndroid || Platform.isIOS) return;
+    if (_lookingForUpdate) return;
     final settings = _settings;
     final now = DateTime.now();
-    final asked = settings.updatePrompt;
-    if (!asked.dueForCheck(now)) return;
+    final before = settings.updatePrompt;
+    if (!asked && !before.dueForCheck(now)) return;
 
     // **Never over a question already on screen.** A modal is something being
     // answered — a name being typed, a collision being decided — and a window
     // arriving on top of it takes the keyboard away mid-word. Asked twice: once
     // to save the request, and again after it, because the listing takes a
-    // moment and a window can open inside that moment.
-    if (_windows.hasModal) return;
+    // moment and a window can open inside that moment. Somebody who has just
+    // picked this from a menu is not in the middle of anything else.
+    if (!asked && _windows.hasModal) return;
 
-    final source = defaultReleaseSource();
-    final found = await checkForUpdate(
-      source: source,
-      running:
-          ReleaseVersion.tryParse(kAppVersion) ?? const ReleaseVersion([0, 0, 0, 0]),
-    );
-    // **Nothing is recorded when it backs off here**, so the next tick looks
-    // again in fifteen minutes rather than what was found being lost for four
-    // hours. It costs one listing per tick, and only while a window is open.
-    if (!mounted || _windows.hasModal) return;
+    _lookingForUpdate = true;
+    try {
+      if (asked) showNotice(context, tr('Checking for updates…'), long: true);
+      final source = defaultReleaseSource();
+      final found = await checkForUpdate(
+        source: source,
+        running: ReleaseVersion.tryParse(kAppVersion) ??
+            const ReleaseVersion([0, 0, 0, 0]),
+      );
+      // **Nothing is recorded when it backs off here**, so the next tick looks
+      // again in fifteen minutes rather than what was found being lost for
+      // four hours. It costs one listing per tick, and only while a window is
+      // open.
+      if (!mounted || (!asked && _windows.hasModal)) return;
 
-    // Written whatever the answer was, a failure included: a machine that is
-    // never on a network must not reach for one at every tick.
-    final prompt = asked.copyWith(lastChecked: now);
-    await settings.setUpdatePrompt(prompt);
+      // Written whatever the answer was, a failure included: a machine that
+      // is never on a network must not reach for one at every tick.
+      final prompt = before.copyWith(lastChecked: now);
+      await settings.setUpdatePrompt(prompt);
+      if (!mounted) return;
 
-    // Silent for all three of "nothing newer", "nothing published" and "could
-    // not be read". Nobody asked, so nobody is told.
-    if (found is! UpdateAvailable) return;
-    if (!prompt.worthOffering(found.archive.version, now)) return;
+      if (asked) {
+        // The same four sentences the settings row says, for the same four
+        // answers.
+        final said = switch (found) {
+          UpToDate() => tr('This is the newest release.'),
+          NoReleasePublished(:final source) => tr(
+            'Nothing has been published yet at {source}.',
+            {'source': source},
+          ),
+          CheckFailed(:final problem) => tr(
+            'Could not read the release listing: {problem}',
+            {'problem': '$problem'},
+          ),
+          UpdateAvailable() => null,
+        };
+        if (said != null) {
+          showNotice(context, said, long: found is CheckFailed);
+          return;
+        }
+        hideNotice();
+      }
 
+      // Silent, when nobody asked, for all three of "nothing newer", "nothing
+      // published" and "could not be read". Nobody asked, so nobody is told.
+      if (found is! UpdateAvailable) return;
+      if (!asked && !prompt.worthOffering(found.archive.version, now)) return;
+      await _offerFound(source, found, prompt);
+    } finally {
+      _lookingForUpdate = false;
+    }
+  }
+
+  /// Puts a release that was found in front of somebody, and remembers the
+  /// answer — see [UpdatePrompt] for what each one silences and for how long.
+  Future<void> _offerFound(
+    ReleaseSource source,
+    UpdateAvailable found,
+    UpdatePrompt prompt,
+  ) async {
+    final settings = _settings;
     final notes = await ReleaseNotes.fetch(source, found.archive.version);
     if (!mounted) return;
     final answer = await showUpdateOffer(
@@ -3954,12 +4191,13 @@ class _CommanderScreenState extends State<CommanderScreen>
         StageStep.ready => tr('Restarting…'),
       };
 
-  Future<void> _openSettings() async {
+  /// Settings, opened [at] a tab when the command that asked names one.
+  Future<void> _openSettings({SettingsPlace? at}) async {
     // A page, not a window: settings are somewhere you go and come back from,
     // and they want the whole area rather than a frame floating over it. The
     // page draws the application's own title bar itself, so the window is
     // still draggable from inside — see SettingsPage.
-    await SettingsPage.open(context);
+    await SettingsPage.open(context, at: at);
     if (mounted) _keyboard.requestFocus();
   }
 
@@ -4320,4 +4558,49 @@ class _PanelSwitcher extends StatelessWidget {
       child: Row(children: [tab(tr('Left'), true), tab(tr('Right'), false)]),
     );
   }
+}
+
+/// What somebody typed into a field that was filled with a folder — "Copy as",
+/// the name of an archive — read as a place: a whole path, or a name or a
+/// relative path below [fallbackDirectory].
+///
+/// **The folder in the field is written as it is shown**, and since backlog
+/// 142 that has no login and no password in it. So text that still begins
+/// with it is read as that folder plus what follows — never parsed afresh,
+/// which would be the same place without the credential that opens it.
+VfsPath? resolveTypedDestination(String typed, VfsPath fallbackDirectory) {
+  VfsPath? below(VfsPath from, String relative) {
+    var result = from;
+    for (final segment in relative.split(RegExp(r'[\\/]'))) {
+      if (segment.isEmpty || segment == '.') continue;
+      result =
+          segment == '..' ? (result.parent ?? result) : result.child(segment);
+    }
+    return result == from ? null : result;
+  }
+
+  if (fallbackDirectory.scheme != VfsPath.localScheme) {
+    final shown = fallbackDirectory.display;
+    if (typed.startsWith(shown)) {
+      final rest = typed.substring(shown.length);
+      // The folder itself and not a longer name that happens to begin with
+      // it: `/share` is not the start of `/shared`.
+      if (rest.isEmpty ||
+          rest.startsWith('/') ||
+          rest.startsWith(r'\') ||
+          shown.endsWith('/')) {
+        return below(fallbackDirectory, rest);
+      }
+    }
+  }
+
+  if (typed.contains('://')) return VfsPath.parse(typed);
+
+  final looksLikeAPath = Platform.isWindows
+      ? RegExp(r'^([A-Za-z]:[\\/]|\\\\)').hasMatch(typed)
+      : typed.startsWith('/');
+  if (looksLikeAPath) return VfsPath.local(typed);
+
+  // A name, or a relative path below the folder shown.
+  return below(fallbackDirectory, typed);
 }

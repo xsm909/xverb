@@ -64,6 +64,15 @@ class PanelController extends ChangeNotifier {
   final FileSystemRegistry registry;
   final SettingsStore settings;
 
+  /// Puts a saved connection's password back into a place that arrived without
+  /// one — see `ConnectionStore.withSecret`. Set by the application; null in a
+  /// panel built on its own, which then goes where it is told as it is.
+  ///
+  /// **Asked on every move**, so every road into a remembered place is covered
+  /// by one line: the folder history, where the panel was left, where a volume
+  /// was left. None of those may keep a password on disk (backlog 142).
+  VfsPath Function(VfsPath path)? credentials;
+
   /// Which side of the window this panel is on, which is what says where it is
   /// saved and read back from.
   ///
@@ -266,7 +275,7 @@ class PanelController extends ChangeNotifier {
   Future<void> rememberWhereItIs() async {
     final at = _location;
     if (at == null) return;
-    await settings.setPanelPath(isLeft, at.toString());
+    await settings.setPanelPath(isLeft, at.withoutPassword.toString());
     // Under the side it is on *now*, the same as the location: a panel that
     // changed sides and kept the old side's row would come back standing on
     // whatever the other panel was looking at.
@@ -396,6 +405,10 @@ class PanelController extends ChangeNotifier {
     bool remember = true,
     String? cursorOn,
   }) async {
+    // A place written down without its password gets it back from the saved
+    // connection before anything is asked of the transport.
+    path = credentials?.call(path) ?? path;
+
     // Going somewhere puts the listing back. A panel cannot be in a folder and
     // handed over to something else at the same time, so a view that sends its
     // own panel to a location is asking to be replaced by what is there.
@@ -458,14 +471,17 @@ class PanelController extends ChangeNotifier {
     }
 
     if (remember && moved) {
-      await settings.setPanelPath(isLeft, path.toString());
+      // Written without the password: a file on disk is not a place for one,
+      // and [credentials] finds it again on the way back in.
+      final bare = path.withoutPassword;
+      await settings.setPanelPath(isLeft, bare.toString());
 
       // Where this volume was left, for the next change of drive. Only
       // locations of the volume's own kind: inside an archive the walk up leads
       // out to the drive holding it, and "go to C:" opening a zip file is not
       // what anybody meant by remembering.
       if (path.scheme == path.root.scheme) {
-        await settings.setVolumePath(path.root.toString(), path.toString());
+        await settings.setVolumePath(bare.root.toString(), bare.toString());
       }
     }
     return moved;
@@ -646,7 +662,8 @@ class PanelController extends ChangeNotifier {
   /// through the path bar is [navigateTo] and is left alone — a trail button
   /// says which place is wanted, and it is not a remembered one.
   Future<void> openVolume(VfsPath volume) async {
-    final remembered = settings.volumePath(volume.root.toString());
+    final remembered =
+        settings.volumePath(volume.root.withoutPassword.toString());
 
     if (remembered != null) {
       final path = VfsPath.parse(remembered);

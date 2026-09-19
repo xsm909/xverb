@@ -62,6 +62,42 @@ class VfsPath implements Comparable<VfsPath> {
 
   bool get isInsideArchive => archiveHost != null;
 
+  /// This location with the password taken out and the login left — the form
+  /// it is written to disk in.
+  ///
+  /// **Never a password on disk** (backlog 142). A connection carries its
+  /// credential in the URL's user info, which is how the transport gets it,
+  /// and the folder history and the remembered panel locations were writing
+  /// that URL out whole. The login stays: it says whose place this is, and it
+  /// is what the password is found again by — see `ConnectionStore.withSecret`.
+  ///
+  /// An archive lying on a connection carries that connection's URL in its
+  /// query, so that goes through the same.
+  VfsPath get withoutPassword {
+    final archive = archiveHost;
+    if (archive != null) {
+      final bare = archive.withoutPassword;
+      return identical(bare, archive) ? this : withArchiveHost(bare);
+    }
+    final info = uri.userInfo;
+    final colon = info.indexOf(':');
+    if (colon < 0) return this;
+    return VfsPath(uri.replace(userInfo: info.substring(0, colon)));
+  }
+
+  /// This location, inside [archive] instead of the archive it is in.
+  ///
+  /// The query is written the way [insideArchive] writes it, so a location
+  /// that has been through this reads the same as one that never was.
+  VfsPath withArchiveHost(VfsPath archive) {
+    final from = '$hostQuery=${Uri.encodeComponent(archive.toString())}';
+    final query = [
+      for (final part in uri.query.split('&'))
+        if (part.startsWith('$hostQuery=')) from else part,
+    ].join('&');
+    return VfsPath(uri.replace(query: query));
+  }
+
   /// What this location says it is pointing *at*, or null when it says nothing.
   ///
   /// **A convention, not a scheme's secret.** A location may carry `ref=` in
@@ -223,7 +259,12 @@ class VfsPath implements Comparable<VfsPath> {
       // better as `C:\` than as `C:`.
       return native;
     }
-    return Uri.decodeFull(uri.toString());
+    // **Never the login or the password** — backlog 142. A connection carries
+    // its credential in the URL's user info, which is how the transport gets
+    // it, and this is the form every printer of a path uses: the path bar,
+    // the prompt, the clipboard, search, the hints, the messages. The URL
+    // itself keeps it; only the words lose it.
+    return Uri.decodeFull(uri.replace(userInfo: '').toString());
   }
 
   static Uri _normalise(Uri uri) {
@@ -264,3 +305,22 @@ class VfsPath implements Comparable<VfsPath> {
     return uri.replace(path: '${uri.path}/').toString();
   }
 }
+
+/// [text] with the password taken out of every URL in it:
+/// `scheme://user:password@host` becomes `scheme://user@host`, and the same
+/// written percent-encoded, the way a location inside an archive carries the
+/// URL of the archive.
+///
+/// For text nobody controls — what a plugin prints. A plugin is handed a
+/// connection's URL, and printing what it was given is the obvious thing to do.
+String withoutPasswords(String text) => text
+    .replaceAllMapped(_plainCredential, (match) => '${match[1]}@')
+    .replaceAllMapped(_encodedCredential, (match) => '${match[1]}%40');
+
+final RegExp _plainCredential =
+    RegExp(r'([A-Za-z][A-Za-z0-9+.\-]*://[^\s/:@]+):[^\s/@]*@');
+
+final RegExp _encodedCredential = RegExp(
+  r'(%3A%2F%2F(?:(?!%3A|%40|%2F)[^\s&/])+)%3A(?:(?!%40)[^\s&/])*%40',
+  caseSensitive: false,
+);

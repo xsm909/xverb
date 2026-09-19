@@ -412,7 +412,7 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
               // because the alternative is finding out at the user's end that
               // the family they picked has no kanji in it.
               fontFamilyFallback: settings.resolvedLanguage.needsWideCoverage
-                  ? _wideCoverageFonts
+                  ? _wideCoverageFontsFor(settings.resolvedLanguage.code)
                   : null,
               // A backdrop effect only shows through if nothing paints over it.
               scaffoldBackgroundColor:
@@ -543,7 +543,31 @@ class _CutCorners extends CustomPainter {
 /// Hiragino Sans and Apple SD Gothic Neo are two different families, as are Yu
 /// Gothic and Malgun Gothic. The fallback is walked per glyph, so a list that
 /// names both answers for either language and a list that names one leaves the
-/// other in boxes.
+/// other in boxes. Chinese has faces of its own — see [_wideCoverageFontsFor].
+List<String> _wideCoverageFontsFor(String language) =>
+    language.startsWith('zh') ? _chineseFirstFonts : _wideCoverageFonts;
+
+/// The faces the systems ship for Simplified Chinese.
+const List<String> _chineseFaces = [
+  'PingFang SC', // macOS
+  'Microsoft YaHei UI', // Windows
+  'Microsoft YaHei',
+  'Noto Sans CJK SC', // Linux
+  'Noto Sans SC',
+  'Source Han Sans SC',
+];
+
+/// **Ahead of the rest, because the order decides how a character is drawn**,
+/// not only whether. The Japanese and Korean faces carry Han characters too,
+/// in their own forms, and the fallback takes the first face that has the
+/// glyph: listed after Hiragino, a Chinese interface would be set in Japanese
+/// shapes, and the simplified characters Hiragino has not got would drop to
+/// the next face — one word in two typefaces.
+const List<String> _chineseFirstFonts = [
+  ..._chineseFaces,
+  ..._wideCoverageFonts,
+];
+
 const List<String> _wideCoverageFonts = [
   'Hiragino Sans', // macOS, Japanese
   'Hiragino Kaku Gothic ProN', // macOS, older

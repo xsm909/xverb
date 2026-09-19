@@ -278,28 +278,31 @@ extension PanelDensityMetrics on PanelDensity {
 @immutable
 class AppearanceSettings {
   const AppearanceSettings({
-    this.panelBackground = const Color(0xFFF7F7F4),
-    // **The inks are what Xverb Light derives**, to four points a channel of
-    // the near-blacks that were written here by hand. That is not a look being
-    // changed — nobody can see the difference between two near-blacks — it is
-    // the defaults and the palette of the same name being made literally the
-    // same thing, so that choosing Xverb Light after pressing something is a
-    // way back rather than an approximate one.
-    this.panelForeground = const Color(0xFF272721),
-    this.readingBackground = const Color(0xFFF7F7F4),
-    this.readingForeground = const Color(0xFF272721),
+    // **The defaults are the release's palette, Iceland** — the one that goes
+    // with the glacier on the About card, since 1.1.0.476. Each release is a
+    // place with a photograph, and the
+    // appearance a fresh install opens in is the palette of that picture; see
+    // `ColourSchemeLibrary.builtIn`, where it stands first.
+    //
+    // Every colour below is what Iceland's three seeds derive, written out,
+    // so the defaults and the palette of that name are literally the same
+    // thing and choosing Iceland after pressing something is a way back.
+    this.panelBackground = const Color(0xFF0C1A1A),
+    this.panelForeground = const Color(0xFFEAF0F0),
+    this.readingBackground = const Color(0xFF0C1A1A),
+    this.readingForeground = const Color(0xFFEAF0F0),
     // A light yellow ground with dark blue on it, and the one note in the
     // application that is *not* in the palette — a hint is
     // paper pinned to the window, and it is meant to be told apart from
     // everything it floats over at a glance.
     this.hintBackground = const Color(0xFFFDF3C7),
     this.hintForeground = const Color(0xFF0B2A5B),
-    this.directoryColor = const Color(0xFF12447A),
-    this.markedColor = const Color(0xFFB5460F),
-    this.cursorColor = const Color(0xFFBBD4F5),
-    this.accentColor = const Color(0xFF2F72D6),
-    this.headerBackground = const Color(0xFFE7E7E2),
-    this.headerForeground = const Color(0xFF252522),
+    this.directoryColor = const Color(0xFFC0F2EC),
+    this.markedColor = const Color(0xFF6BCCE1),
+    this.cursorColor = const Color(0xFF2DD4BF),
+    this.accentColor = const Color(0xFF2DD4BF),
+    this.headerBackground = const Color(0xFF081313),
+    this.headerForeground = const Color(0xFFEAF0F0),
     this.fontFamily = '',
     this.fileFontFamily = '',
     this.fontSize = defaultFontSize,
@@ -328,12 +331,16 @@ class AppearanceSettings {
     this.monochromeIcons = false,
     this.showGridLines = false,
     this.alternateRowShading = true,
-    // Dark, not light: a white stripe over a near-white panel is nothing at
+    // Light, not dark: a black stripe over a near-black panel is nothing at
     // all — the same reasoning the palette itself carries.
-    this.alternateRowColor = const Color(0x0A000000),
-    this.darkChrome = false,
-    this.backdrop = WindowBackdrop.opaque,
-    this.panelOpacity = 0.82,
+    this.alternateRowColor = const Color(0x08FFFFFF),
+    this.darkChrome = true,
+    // **The look of the window is part of the release's appearance too** — he
+    // chose colours *and* the glass they are seen through. Acrylic behind
+    // panels at 0.7 and menus at 0.55, blurred at 45: the teal is meant to be
+    // seen over whatever is behind the window, the way the photograph's ice is.
+    this.backdrop = WindowBackdrop.acrylic,
+    this.panelOpacity = 0.7,
     // **The defaults are now what the palette derives, not what used to sit
     // behind a flag.** These three, and the four below them, were the colours
     // stored *beside* `menuFollowsPalette`, `consoleFollowsPalette` and
@@ -346,28 +353,30 @@ class AppearanceSettings {
     // pair for a menu, the panel's for a console, the panel and the cursor for
     // a window. The shipped look does not move a pixel, and the defaults are
     // now a palette rather than a palette plus seven exceptions.
-    this.menuBackground = const Color(0xFFE7E7E2),
-    this.menuForeground = const Color(0xFF252522),
+    this.menuBackground = const Color(0xFF081313),
+    this.menuForeground = const Color(0xFFEAF0F0),
     this.menuBorderColor = const Color(0xFFFFFFFF),
     this.menuBorderWidth = 1,
     this.menuMonolith = true,
-    this.menuOpacity = 0.6,
-    this.menuBlur = 30,
-    this.slidePanelOpacity = 0.78,
-    this.invertCursorText = false,
-    this.consoleBackground = const Color(0xFFF7F7F4),
+    this.menuOpacity = 0.55,
+    this.menuBlur = 45,
+    this.slidePanelOpacity = 0.65,
+    // On: the cursor is the accent itself here, a bright teal, and the name
+    // on it reads in the paper's dark rather than in the pale ink beside it.
+    this.invertCursorText = true,
+    this.consoleBackground = const Color(0xFF0C1A1A),
     // The panel's ink at nine tenths, which is what following produced.
-    this.consoleForeground = const Color(0xE6272721),
-    this.windowBackground = const Color(0xFFF7F7F4),
+    this.consoleForeground = const Color(0xE6EAF0F0),
+    this.windowBackground = const Color(0xFF0C1A1A),
     // The cursor's colour, because a window grows out of the row it was asked
-    // at, and black on it because that is what reads on a pale blue.
-    this.windowHeaderBackground = const Color(0xFFBBD4F5),
+    // at, and black on it because that is what reads on a bright teal.
+    this.windowHeaderBackground = const Color(0xFF2DD4BF),
     this.windowHeaderForeground = const Color(0xFF000000),
     // The constant itself, not a copy of what it happens to say: it was written
     // out as 0.5 here, and the moment `motion.dart` was tuned the default and
     // the preset disagreed.
     this.animationScale = kAnimationNormal,
-    this.animateLiveFileList = false,
+    this.animateLiveFileList = true,
     this.liveFileListMotion = LiveListMotion.slide,
     this.animateFileListCursor = false,
     this.folderChangeMotion = FolderSwapMotion.depth,
@@ -1022,8 +1031,18 @@ class AppearanceSettings {
   /// changed, which was never built. The old key is not read: it answered a
   /// different question, and a yes to that one is not a yes to this.
   ///
-  /// Off by default, and the switch is dead while [animationScale] is 0 —
-  /// motion off means nothing moves, and this is motion.
+  /// **On by default since 1.1.0.472.** It was one of two list switches
+  /// offered as the exception and left off, because each hangs a ticker on a
+  /// row; the live list is worth that cost for everybody.
+  ///
+  /// **Stored as `liveFileList`, not under its old name.** Every save writes
+  /// the whole of the appearance, so the old default sat as a stored `false`
+  /// on every machine that had ever changed a colour, and a new default would
+  /// have reached nobody who had used the application — the move
+  /// `viewer.zoom.mode` made to `viewer.zoom.opens` for the same reason.
+  ///
+  /// The switch is dead while [animationScale] is 0 — motion off means
+  /// nothing moves, and this is motion.
   final bool animateLiveFileList;
 
   /// Which of the two answers a live row gives: stepping aside, or growing.
@@ -1320,7 +1339,7 @@ class AppearanceSettings {
     'windowHeaderBackground': windowHeaderBackground.toARGB32(),
     'windowHeaderForeground': windowHeaderForeground.toARGB32(),
     'animationScale': animationScale,
-    'animateLiveFileList': animateLiveFileList,
+    'liveFileList': animateLiveFileList,
     'liveFileListMotion': liveFileListMotion.name,
     'animateFileListCursor': animateFileListCursor,
     'folderChangeMotion': folderChangeMotion.name,
@@ -1510,8 +1529,10 @@ class AppearanceSettings {
         final num saved => saved.toDouble().clamp(0.0, 1.0),
         _ => defaults.animationScale,
       },
+      // Under its new name only — see [animateLiveFileList] for why the old
+      // one is left where it lies.
       animateLiveFileList:
-          json['animateLiveFileList'] as bool? ?? defaults.animateLiveFileList,
+          json['liveFileList'] as bool? ?? defaults.animateLiveFileList,
       liveFileListMotion: LiveListMotion.values.firstWhere(
         (m) => m.name == json['liveFileListMotion'],
         orElse: () => defaults.liveFileListMotion,

@@ -41,13 +41,13 @@ library;
 const int kMajor = 1;
 
 /// B.
-const int kMinor = 0;
+const int kMinor = 1;
 
 /// C. Moving this is the release.
 const int kRelease = 0;
 
 /// D.
-const int kBuildNumber = 448;
+const int kBuildNumber = 497;
 
 /// A.B.C, which is what a release is called: the build is not part of the name.
 ///
@@ -101,3 +101,10 @@ const String kReleaseName = 'Iceland';
 /// and change them all: the two mobile labels kept an older spelling for months
 /// precisely because nothing in Dart ever reads them.
 const String kAppTitle = 'Xverb';
+
+/// The name as the title bar draws it, beside the mark — and nowhere else.
+///
+/// The window title the OS shows, the About card, the Dock and every platform
+/// file keep [kAppTitle]. Only the bar says the short form: it is the one place
+/// the mark already stands beside the name.
+const String kAppTitleShort = 'XV';

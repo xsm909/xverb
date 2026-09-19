@@ -17,6 +17,7 @@ import '../viewer/plugin_viewer_page.dart' show PluginContentView;
 import '../widgets/context_menu.dart' show MenuNode;
 import '../widgets/escape_to_pop.dart';
 import '../widgets/title_bar.dart';
+import 'plugin_about.dart';
 import 'plugin_icons.dart';
 import 'plugin_table.dart' show driveTable;
 import 'row_menu.dart';
@@ -140,6 +141,12 @@ class _PluginViewPageState extends State<PluginViewPage> {
           _toPanel();
           return KeyEventResult.handled;
         }
+        // Ahead of the view's own keys: a view that asks for every key is
+        // still a plugin somebody may want to know the version of.
+        if (isPluginAboutKey(event)) {
+          unawaited(_showAbout());
+          return KeyEventResult.handled;
+        }
         return _onKey(event);
       },
       child: EscapeToPop(
@@ -203,6 +210,14 @@ class _PluginViewPageState extends State<PluginViewPage> {
                           _attachment.press(command.id),
                         ),
                       ),
+                  // Last, beside the window's own buttons: the view's
+                  // commands are about what it shows, and this is about the
+                  // plugin showing it.
+                  TitleBarButton(
+                    icon: Icons.help_outline,
+                    tooltip: '${tr('About {name}', {'name': _pluginName})}  F1',
+                    onPressed: () => unawaited(_showAbout()),
+                  ),
                 ],
               ),
               Expanded(
@@ -299,6 +314,18 @@ class _PluginViewPageState extends State<PluginViewPage> {
   /// Same order as the panel's, and that order is the contract: a view that
   /// asked for `keys` gets first refusal, and the table's own cursor takes
   /// what is left.
+  PluginManifest? get _manifest =>
+      context.read<AppState>().plugins.manifestOf(widget.view.pluginId);
+
+  String get _pluginName => _manifest?.displayName ?? widget.view.pluginName;
+
+  /// The plugin drawing the page, its version and its latest changes.
+  Future<void> _showAbout() async {
+    final manifest = _manifest;
+    if (manifest == null) return;
+    await showPluginAbout(context, manifest: manifest);
+  }
+
   KeyEventResult _onKey(KeyDownEvent event) {
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.escape) return KeyEventResult.ignored;

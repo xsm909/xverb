@@ -8,7 +8,28 @@ import '../page_transition.dart';
 import '../widgets/escape_to_pop.dart';
 import '../widgets/title_bar.dart';
 import '../windows/window_layer.dart';
+import 'about_tab.dart';
 import 'settings_view.dart';
+
+/// Where settings open: one of the three tabs, or a place inside one.
+///
+/// **A command that names a tab opens on that tab.** Help → Plugins and Help →
+/// Key bindings both used to open settings wherever they were last left,
+/// which is Appearance more often than not — so the menu said one thing and the
+/// page showed another.
+enum SettingsPlace {
+  appearance(0),
+  plugins(1),
+  about(2),
+
+  /// About, with its table of keys brought up to the top.
+  keyBindings(2);
+
+  const SettingsPlace(this.tab);
+
+  /// The tab it is on, as [SettingsView.lastTab] counts them.
+  final int tab;
+}
 
 /// Settings as a page you go to and come back from, rather than a window that
 /// floats over the panels.
@@ -32,9 +53,19 @@ class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
   /// Opens the page. Kept here so callers do not each have to know the route.
-  static Future<void> open(BuildContext context) => Navigator.of(context).push(
-    MotionPageRoute<void>.of(context, builder: (_) => const SettingsPage()),
-  );
+  ///
+  /// [at] is where it opens; without it, on whichever tab was last looked at —
+  /// which is what F9 and Settings want, and what a command naming a tab does
+  /// not.
+  static Future<void> open(BuildContext context, {SettingsPlace? at}) {
+    if (at != null) {
+      SettingsView.lastTab = at.tab;
+      AboutTab.revealKeyBindings = at == SettingsPlace.keyBindings;
+    }
+    return Navigator.of(context).push(
+      MotionPageRoute<void>.of(context, builder: (_) => const SettingsPage()),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {

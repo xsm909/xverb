@@ -769,6 +769,7 @@ class PluginManifest {
     this.platforms = const [],
     this.pythonMin,
     this.icon,
+    this.banner,
     this.declaredCategory,
     this.isBundled = false,
   });
@@ -838,6 +839,7 @@ class PluginManifest {
       platforms: (json['platforms'] as List?)?.cast<String>() ?? const [],
       pythonMin: json['pythonMin'] as String?,
       icon: json['icon'] as String?,
+      banner: json['banner'] as String?,
       declaredCategory: json['category'] as String?,
     );
   }
@@ -978,6 +980,27 @@ class PluginManifest {
       if (lower.endsWith(kind)) return named;
     }
     return null;
+  }
+
+  /// The picture across the top of the plugin's About card, as the file name
+  /// of a picture beside the manifest — the application's own is 1240 × 500,
+  /// and the card draws it at that shape.
+  ///
+  /// **Optional, and absent is the ordinary case**: a plugin without one gets
+  /// a card with no picture at all, not a placeholder standing in for it.
+  final String? banner;
+
+  /// [banner] when it is a plain file name, or null.
+  ///
+  /// A name and not a path, for the reason [iconFile] gives: a picture is not
+  /// a way to read the disk.
+  String? get bannerFile {
+    final named = banner?.trim();
+    if (named == null || named.isEmpty) return null;
+    if (named.contains('/') || named.contains(r'\') || named.startsWith('.')) {
+      return null;
+    }
+    return named;
   }
 
   /// Lowest Python this plugin will run on, as `major.minor`. Null means the

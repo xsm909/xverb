@@ -184,6 +184,38 @@ palette is not a mark. Only a plain file name is accepted, not a path: an icon
 is not a way to read the disk. If the file is missing the host falls back to
 the shape rather than to a broken box.
 
+**Keep a `CHANGES.md` beside `plugin.json`.** Every page a plugin draws — a
+viewer, a view, a command's report — carries a **?** in the title bar, and F1
+does the same. It lays the plugin's card over the application, shaped like the
+application's own About card: the plugin's name and version, its description,
+what changed, and a link to its homepage and settings. Pressing anywhere else
+or Escape puts it away. The changes are this file, newest version first:
+
+```markdown
+# Changes
+
+## 0.4.1 — 2026-09-19
+
+- Speaks the application's eleven languages.
+
+## 0.4.0 — 2026-09-19
+
+- Joined cells, notes, and what the file hides.
+```
+
+A second-level heading opens a version; its first word is the version, and
+what follows the dash is the date — kept in the file for people reading it, and
+not shown on the card. Each bullet is one change. Anything above the first
+heading is yours and is not shown. A plugin without the file still gets the
+card; it says the plugin keeps no list of its changes. A translation goes in
+`i18n/CHANGES.<code>.md` and is preferred when the application speaks that
+language. The plugin manager opens the same card from its **?**.
+
+`banner` names a picture beside `plugin.json` to put across the top of that
+card — `"banner": "banner.png"`, a plain file name as with `icon`. It is drawn
+at 1240 × 500, the application's own card's shape. Without one, or with one
+that cannot be read, the card simply has no picture.
+
 `category` is what the plugin manager files this under. It shows shelves first
 and the extensions inside them second, so a plugin without one is a plugin
 nobody browses to. The published collection requires it; the app falls back to
@@ -374,9 +406,13 @@ a `render` block naming one primitive and configuring it.
 | `table` | `source` (`csv`, `tsv`, `json`, `lines`), `delimiter`, `hasHeader`, `maxRows`, `maxBytes` | a data table |
 | `audio` | `maxBytes` | a sound, played by the machine's own engine, drawn as its waveform. See [Sound](#sound) |
 
-`delimiter: "auto"` sniffs `,`, `;`, tab and `|` from the first line. The CSV
-reader handles quoted fields, doubled quotes, and separators or newlines inside
-quotes. `source: "json"` expects a top-level array — of objects (columns are the
+**A `table` with a `csv` or `tsv` source is drawn as a [sheet](#sheets)** by a
+build that has sheets: read a screen at a time with no row limit, so `maxRows`
+and `maxBytes` do not apply to it, and the header is guessed rather than taken
+from `hasHeader`. The manifest still says `table`, which is what an older build
+understands. `delimiter: "auto"` sniffs `,`, `;`, tab and `|` from the head of
+the file. The CSV reader handles quoted fields, doubled quotes, and separators
+or newlines inside quotes, and reads UTF-8, UTF-16 and Windows-1251. `source: "json"` expects a top-level array — of objects (columns are the
 union of keys, in first-seen order) or of arrays (columns are numbered).
 
 Every primitive caps how much it reads and reports `truncated` when it hits the
@@ -463,7 +499,7 @@ Flutter. The host renders these shapes:
 | `file(url)` | **A file, drawn by whichever viewer claims it.** See below |
 | `error(message)` | A message explaining why nothing is shown |
 | `{"kind": "vector", …}` | A drawing made of shapes. See [Drawings](#drawings) |
-| `{"kind": "mesh3d", …}` | A model, turned and lit by the host |
+| `{"kind": "mesh3d", …}` | A model, turned and lit by the host. See [Models](#models) |
 | `{"kind": "audio", "url": …}` | A sound, played by the host. See [Sound](#sound) |
 
 **The rule the last two are instances of, and it is the one to follow when
@@ -560,6 +596,59 @@ tree and applied to the coordinates, arcs cut into cubics, quadratics raised,
 styles inherited and cascaded, fractions of a shape's own box turned into real
 coordinates. There is exactly one thing the host is asked to work out, and it is
 the magnification.
+
+### Models
+
+`{"kind": "mesh3d", "meshes": [...], "clips": [...], "images": [...]}` — world
+space, Y up whatever the file said, base64 float32 positions and normals and
+uint32 indices, and for an animation a matrix per joint per frame, already
+baked. **The plugin bakes and the host draws**: curves, rotation orders, pivots
+and units are the format's problem and stay in the plugin; the camera, the
+lighting, the clock and the keyboard are the host's.
+
+What the host does with it: a turntable camera, three lights standing in the
+world, two-sided shading, textures, linear blend skinning, a clip menu and a
+transport. `S`, `W` and `U` are shaded, wireframe and unlit; `B` puts the
+skeleton over the model.
+
+**A skeleton with nothing on it is a model too.** Most animation files are a
+rig and its clips and no character, and such a file is sent as a mesh with no
+triangles: empty `positions`, `normals` and `indices`, and `bones`,
+`boneParents` and — if it moves — `joints` and a track per clip, exactly as a
+skinned mesh carries them. The host frames the bones, draws them unasked, says
+there is no mesh, and does not offer the ways of looking, there being no
+surface to look at. A mesh with neither triangles nor bones is still nothing to
+show. Hosts before 1.1.0.459 say exactly that about a skeleton, too.
+
+**Two renderers draw it, and the plugin cannot tell which.** The one that is
+always there is a Dart painter over `Canvas.drawVertices` — no dependency, every
+platform, and every vertex rebuilt on the processor each frame. On Windows, when
+the machine has OpenGL 3.3 or better on a real graphics card, the model is
+uploaded once instead and posed by a vertex shader, which is a different
+proposition entirely:
+
+| | painter | OpenGL |
+| --- | --- | --- |
+| 152 triangles | 2.2 ms a frame | 2.2 ms a frame |
+| 102 144 triangles, 2 bones | 81.0 ms | 2.2 ms |
+| a real `.fbx`: 87 280 triangles, 88 bones, 300 frames | 70.2 ms | 2.2 ms |
+
+The card's column does not move, because nothing about the model crosses the
+processor after the upload: a frame costs one buffer of bone matrices and one
+draw call. The painter's does, and the whole of the difference is Dart —
+65 of its 70 ms on the dancing character are skinning, projecting, lighting and
+sorting a hundred thousand triangles, every frame, on the one thread the
+application draws everything else with. Where the two paths differ in *looks*, it is because the card has a
+depth buffer — so interpenetrating geometry comes out right rather than wedged —
+and because it can afford a reflection, which is offered as `R` and is the sky
+the model stands in, computed rather than shipped. Everything else is held to
+agreeing: the same framing, the same three lights, the same rule for lifting a
+material colour too dark to read a shape from.
+
+A machine with no such card, a model with more than 192 bones on one mesh, and
+every platform that is not Windows go on the painter, silently.
+`tool/mesh3d_bench.dart` runs either of them on a model it builds itself, and
+times it — which is where the table above comes from.
 
 ### Tables
 
@@ -697,6 +786,82 @@ another part cannot chase its own tail.
 
 Off by default: it costs a round trip every time somebody stops moving, and
 most views have nothing to do with it.
+
+### Sheets
+
+A **sheet** is rows and columns of cells, for a file that is a table of data
+rather than a list of things — a workbook, a database export. Not a
+[table](#tables): in a table the row is a thing and the cursor is on a row; in a
+sheet the unit is a cell, and the host gives the reader everything a sheet
+needs on its own — the lettered headings and row numbers, selecting cells, rows,
+columns and several ranges at once, the keys, fitted column widths — without the
+plugin knowing any of it.
+
+**Only the rows on screen cross the pipe.** A plugin hands over its sheets with
+`Plugin.workbook`, and the host asks for rows as they are scrolled to:
+
+```python
+from xverb import Plugin, Sheet, sheet_cell
+
+@plugin.viewer("sheets.workbook", "Workbook", extensions=["xlsx"], priority=40)
+def workbook(url):
+    book = read(url)
+    # Titles now, a page only when somebody turns to it.
+    return plugin.workbook(book.titles, load=lambda i: Sheet(book.titles[i], book.rows(i)))
+```
+
+`Sheet(title, rows, header=None, kinds=None, message="")`. The rows are the
+file's rows as they stand, a header row included; the host guesses whether the
+first one names the columns, as it does for a CSV, unless `header` says so.
+A value is a `str`, `int`, `float`, `bool`, `None`, a date or a time, or
+`sheet_cell(value, text=None, role=None)` for a value shown some other way — a
+number with its spreadsheet format on it, which is still summed as the number.
+`role` is `strong`, `dim`, `accent`, `total` or `error`, described and never
+coloured. `kinds` (`text`, `number`, `boolean` per column) is for a plugin
+that knows better than a sample. `message` stands in for an empty sheet.
+
+**A sheet can be shown before it has been read.** Hand over a list another
+thread goes on appending to, with `done` saying when it has finished and
+`cancel` to stop it: the host shows the rows so far, says the count is still
+growing, and asks again every few hundred milliseconds until it is not.
+`Sheet(title, rows, done=finished.is_set, cancel=stop.set)` — the spreadsheet
+plugin opens a sheet of two hundred thousand rows in a fifth of a second this
+way, and reads the rest while it is looked at.
+
+**What the reader does, if the plugin wants to know.**
+`plugin.workbook(..., menu=[(id, label)], on_menu=, on_select=, on_activate=)`
+adds rows under the host's own in the sheet's menu — named when the sheet is
+handed over, because a menu is never made to wait for its rows — and hears,
+when one is chosen, `on_menu(sheet, id, selection)`; where the selection
+settled, `on_select(sheet, selection)`, 120 ms after it stopped moving; and
+Enter or a double click on a cell, `on_activate(sheet, row, column)`. Rows are
+the file's rows, the header row among them, wherever a sort or a filter has put
+them on screen. `on_menu` and `on_activate` may answer `{"notice": text}`,
+`{"copy": text}`, or both, and the host carries it out.
+
+**What a sheet says besides its cells.** `Sheet(merges=[(top, left, bottom,
+right)], notes={(row, column): text}, hidden_rows=[...], hidden_columns=[...])`,
+in the file's rows and columns. A joined cell is drawn as one — its first cell's
+text across it, no grid inside, the outline round all of it; a note marks its
+cell's corner and is read in the status line; what the file hides stays hidden
+until the reader asks for it from the menu. For a sheet still being read they
+are sent once it has been read.
+
+A cell's `role` is drawn: `strong` and `total` in the strong weight, `dim`
+quieter, `accent` in the accent, `error` in the red a diff marks a removal.
+
+More than one sheet gets a pill to choose between them, and Ctrl+PgUp and
+Ctrl+PgDn. The SDK keeps the last eight workbooks open for the host to ask
+about; one older than that answers with a sentence asking for the file to be
+opened again.
+
+On the wire the content is `{kind: "sheet", handle, sheets: [title], sheet,
+rows, columns, header?, kinds?, message?, counting?, menu?, selection?,
+activate?, merges?, notes?, hiddenRows?, hiddenColumns?, from, cells}`, where
+`cells` is the first rows and a cell is a plain value or `{v, t?, r?}`. Every
+`sheet.rows` answer says `rows`, `columns` and `counting` again, so a sheet
+still being read is followed with nothing but the call that reads it. See `sheet.open` and
+`sheet.rows` under [Protocol](#protocol).
 
 ### The braid
 
@@ -1506,6 +1671,11 @@ Use `plugin.log(...)` or write to stderr, which is captured into the plugin log.
 | `view.event` | `viewId`, `context`, `event` | the same |
 | `view.close` | `viewId`, `session` | notification |
 | `command.invoke` | `id`, `args` | anything JSON |
+| `sheet.open` | `handle`, `sheet` | the sheet's size and first rows, as in the content |
+| `sheet.rows` | `handle`, `sheet`, `from`, `count` | `{from, cells, rows, columns, counting}` |
+| `sheet.press` | `handle`, `sheet`, `id`, `selection` | `{notice?, copy?}` or `null` |
+| `sheet.select` | `handle`, `sheet`, `selection` | — |
+| `sheet.activate` | `handle`, `sheet`, `row`, `column` | `{notice?, copy?}` or `null` |
 | `fs.roots` | `scheme` | `[{url, label, subtitle, icon}]` |
 | `fs.defaultLocation` | `scheme` | `{url}` |
 | `fs.list` | `url` | `{entries: [entry]}` |

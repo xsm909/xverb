@@ -8,6 +8,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/i18n/i18n.dart';
+import '../../core/platform/mesh3d_channel.dart';
 import '../../core/plugins/viewer.dart';
 import '../widgets/context_menu.dart';
 import '../widgets/hint.dart';
@@ -62,12 +63,20 @@ class Mesh3dView extends StatefulWidget {
     super.key,
     required this.content,
     this.hasKeyboard = true,
+    this.accelerate = true,
   });
 
   final ViewerContent content;
 
   /// Whether this is the reading the keys belong to. A split page has two.
   final bool hasKeyboard;
+
+  /// Whether the graphics card may be offered this model at all.
+  ///
+  /// True everywhere the application opens one, and the card still has to be
+  /// there and still has to accept the model. False is for putting the two
+  /// renderers side by side, which is the only way to see that they agree.
+  final bool accelerate;
 
   @override
   State<Mesh3dView> createState() => _Mesh3dViewState();
@@ -112,6 +121,19 @@ class _Mesh3dViewState extends State<Mesh3dView>
   Offset _lastFocus = Offset.zero;
   int _pointers = 0;
 
+  /// Whether the drag under way is the middle button's.
+  ///
+  /// **What a second finger is on a mouse.** Moving the model rather than
+  /// turning it was two fingers and nothing else, which is to say it could not
+  /// be done with a mouse at all. The middle button is where every other
+  /// three-dimensional view puts it.
+  ///
+  /// Taken from the raw pointer rather than from the gesture: a scale's details
+  /// say how many fingers and how far, never which button, and the recogniser
+  /// accepts every button — which is why the middle one used to turn the model
+  /// instead of moving it.
+  bool _middle = false;
+
   /// What the clip menu opens from when it is opened from the transport.
   final GlobalKey _clipAnchor = GlobalKey();
 
@@ -130,13 +152,92 @@ class _Mesh3dViewState extends State<Mesh3dView>
   /// existed at all — better than an empty window while a PNG is unpacked.
   List<ui.Image?> _images = const [];
 
+  /// The texture the graphics card draws this model into, when there is one.
+  ///
+  /// **Null is the ordinary case.** It is every platform but Windows, every
+  /// machine whose OpenGL is not worth having, and every model the card would
+  /// not take whole — and in every one of them the painter below draws, exactly
+  /// as it always has. Nothing above this line knows which of the two is
+  /// running; see [_picture].
+  int? _texture;
+
+  /// Whether the card is asked for reflections. Its own switch rather than a
+  /// fourth way of looking: a reflection is not a way of looking at a model,
+  /// it is something the surface of one does. Meaningless without the card, so
+  /// it is only offered when there is one.
+  bool _reflections = true;
+
   @override
   void initState() {
     super.initState();
     _ticker = createTicker(_onTick);
-    _decode();
+    // The pictures first, because the card is handed the decoded ones — no
+    // file is read twice and no decoder is written twice.
+    _decode().whenComplete(_accelerate);
     _takeKeyboard();
     if (_clips.isNotEmpty) _play();
+  }
+
+  /// Offers the model to the graphics card, and takes no for an answer.
+  ///
+  /// Every step of this can fail and none of the failures is worth a word to
+  /// the user: what happens then is that [_texture] stays null and the model is
+  /// drawn the way it was drawn before any of this existed.
+  Future<void> _accelerate() async {
+    if (!widget.accelerate) return;
+    // A skeleton with no mesh on it is lines, and lines are the painter's:
+    // there is nothing for the card to hold.
+    if (!Mesh3dChannel.isSupported || _scene.triangles == 0) return;
+    final machine = await Mesh3dChannel.probe();
+    if (!machine.available || !mounted) return;
+
+    final texture = await Mesh3dChannel.create();
+    if (texture == null) return;
+    if (!mounted) {
+      await Mesh3dChannel.dispose(texture);
+      return;
+    }
+
+    final held = await Mesh3dChannel.upload(
+      texture,
+      widget.content.meshes,
+      _images,
+      // What the painter would have shown for each of them, worked out by the
+      // painter's own rule. A dark material lifted on one path and not on the
+      // other would be two renderers disagreeing about what colour a thing is.
+      [
+        for (final mesh in widget.content.meshes)
+          mesh.color == null
+              ? null
+              : _MeshPainter._visible(Color(mesh.color!)).toARGB32(),
+      ],
+    );
+    if (!held || !mounted) {
+      await Mesh3dChannel.dispose(texture);
+      return;
+    }
+    await Mesh3dChannel.clips(texture, _clips);
+    if (!mounted) {
+      await Mesh3dChannel.dispose(texture);
+      return;
+    }
+
+    setState(() {
+      _texture = texture;
+      // What the processor path built for this frame is not needed again, and
+      // a posed copy of a hundred thousand vertices is not a thing to keep.
+      _posed = null;
+      _posedNormals = null;
+      _posedBones = null;
+      _posedFrame = -1;
+    });
+  }
+
+  /// Gives the surface back. Not awaited by [dispose], which cannot wait.
+  void _release() {
+    final texture = _texture;
+    _texture = null;
+    if (texture != null) Mesh3dChannel.dispose(texture);
   }
 
   void _takeKeyboard() {
@@ -154,15 +255,24 @@ class _Mesh3dViewState extends State<Mesh3dView>
     if (keys.isControlPressed || keys.isMetaPressed || keys.isAltPressed) {
       return KeyEventResult.ignored;
     }
+    // A skeleton on its own has no surface to be looked at three ways, and its
+    // bones are drawn whether or not they are asked for — so none of the four
+    // letters means anything over it.
+    final surface = !_scene.bonesOnly;
     for (final look in MeshLook.values) {
-      if (event.character?.toLowerCase() == look.accelerator) {
+      if (surface && event.character?.toLowerCase() == look.accelerator) {
         setState(() => _look = look);
         return KeyEventResult.handled;
       }
     }
     if (event.character?.toLowerCase() == 'b') {
-      if (!_hasSkeleton) return KeyEventResult.ignored;
+      if (!_hasSkeleton || !surface) return KeyEventResult.ignored;
       setState(() => _skeleton = !_skeleton);
+      return KeyEventResult.handled;
+    }
+    if (event.character?.toLowerCase() == 'r') {
+      if (_texture == null) return KeyEventResult.ignored;
+      setState(() => _reflections = !_reflections);
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.space && _clips.isNotEmpty) {
@@ -184,7 +294,10 @@ class _Mesh3dViewState extends State<Mesh3dView>
       _frame = 0;
       _clip = 0;
       _posedFrame = -1;
-      _decode();
+      // A different model is a different upload. The old surface goes before
+      // the new one is asked for, so two models are never on the card at once.
+      _release();
+      _decode().whenComplete(_accelerate);
       _reset();
     }
   }
@@ -194,6 +307,7 @@ class _Mesh3dViewState extends State<Mesh3dView>
     _ticker.dispose();
     _keys.dispose();
     _forget();
+    _release();
     super.dispose();
   }
 
@@ -422,6 +536,9 @@ class _Mesh3dViewState extends State<Mesh3dView>
   /// works outside it too.
   Future<void> _menu({Offset? at}) async {
     final clips = _clips;
+    // Over a skeleton on its own, which clip is the only choice there is.
+    final surface = !_scene.bonesOnly;
+    if (!surface && clips.length < 2) return;
     final box = _clipAnchor.currentContext?.findRenderObject() as RenderBox?;
     await showAppContextMenu(
       context: context,
@@ -431,15 +548,16 @@ class _Mesh3dViewState extends State<Mesh3dView>
           : box.localToGlobal(Offset.zero) & box.size,
       searchHint: tr('Search'),
       nodes: [
-        for (final look in MeshLook.values)
-          MenuItem(
-            tr(look.label),
-            icon: look.icon,
-            accelerator: look.accelerator,
-            checked: look == _look,
-            onSelected: () => setState(() => _look = look),
-          ),
-        if (_hasSkeleton)
+        if (surface)
+          for (final look in MeshLook.values)
+            MenuItem(
+              tr(look.label),
+              icon: look.icon,
+              accelerator: look.accelerator,
+              checked: look == _look,
+              onSelected: () => setState(() => _look = look),
+            ),
+        if (_hasSkeleton && surface)
           MenuItem(
             tr('Bones over the model'),
             icon: Icons.polyline_outlined,
@@ -447,7 +565,15 @@ class _Mesh3dViewState extends State<Mesh3dView>
             checked: _skeleton,
             onSelected: () => setState(() => _skeleton = !_skeleton),
           ),
-        if (clips.length > 1) const MenuSeparator(),
+        if (_texture != null)
+          MenuItem(
+            tr('Reflections'),
+            icon: Icons.blur_on,
+            accelerator: 'r',
+            checked: _reflections,
+            onSelected: () => setState(() => _reflections = !_reflections),
+          ),
+        if (clips.length > 1 && surface) const MenuSeparator(),
         if (clips.length > 1)
           for (var i = 0; i < clips.length; i++)
             MenuItem(
@@ -476,7 +602,9 @@ class _Mesh3dViewState extends State<Mesh3dView>
       return Center(child: Text(tr('Nothing to show.')));
     }
     final theme = Theme.of(context);
-    _pose();
+    // Skinning on the processor is what the card is here to stop doing. Asked
+    // only when the card is not the one drawing.
+    if (_texture == null) _pose();
     final clip = _current;
 
     return Focus(
@@ -488,6 +616,10 @@ class _Mesh3dViewState extends State<Mesh3dView>
           _zoomBy(event.scrollDelta.dy > 0 ? 1 / 1.12 : 1.12);
         }
       },
+      onPointerDown: (event) =>
+          _middle = event.buttons & kMiddleMouseButton != 0,
+      onPointerUp: (_) => _middle = false,
+      onPointerCancel: (_) => _middle = false,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onDoubleTap: _reset,
@@ -506,41 +638,29 @@ class _Mesh3dViewState extends State<Mesh3dView>
           final moved = details.localFocalPoint - _lastFocus;
           _lastFocus = details.localFocalPoint;
           // One finger turns the model; two move it, which is what every
-          // other three-dimensional thing on a trackpad does.
-          if (_pointers > 1 || details.pointerCount > 1) {
+          // other three-dimensional thing on a trackpad does — and the middle
+          // button is the second finger a mouse does not have.
+          if (_middle || _pointers > 1 || details.pointerCount > 1) {
             setState(() => _pan += moved);
           } else if (details.scale == 1) {
             _orbit(moved);
           }
         },
-        child: CustomPaint(
-          painter: _MeshPainter(
-            scene: _scene,
-            images: _images,
-            look: _look,
-            skeleton: _skeleton,
-            posed: _posed,
-            posedNormals: _posedNormals,
-            posedBones: _posedBones,
-            yaw: _yaw,
-            pitch: _pitch,
-            zoom: _zoom,
-            pan: _pan,
-            background: theme.colorScheme.surface,
-            fallback: theme.colorScheme.primary,
-          ),
-          child: Column(
+        child: _picture(
+          theme,
+          Column(
             children: [
               // Over the model, top right: what it is being looked at with,
               // and one press to change it. The menu and the letters do the
               // same thing — this is the one you can see.
-              Align(
-                alignment: Alignment.topRight,
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: _toggles(theme),
+              if (!_scene.bonesOnly)
+                Align(
+                  alignment: Alignment.topRight,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: _toggles(theme),
+                  ),
                 ),
-              ),
               const Spacer(),
               if (clip != null) _transport(theme, clip),
               Padding(
@@ -553,10 +673,12 @@ class _Mesh3dViewState extends State<Mesh3dView>
                     // pushed this row off the end of the window.
                     Flexible(
                       child: Text(
-                        '${tr('{triangles} △ · {meshes} mesh(es)', {
-                          'triangles': _scene.triangles,
-                          'meshes': _scene.meshes.length,
-                        })}'
+                        // A skeleton with nothing on it is not "0 △", which
+                        // reads as a model that failed to load.
+                        '${_scene.bonesOnly ? tr('Skeleton only, no mesh') : tr('{triangles} △ · {meshes} mesh(es)', {
+                            'triangles': _scene.triangles,
+                            'meshes': _scene.meshes.length,
+                          })}'
                         '${clip == null ? '' : ' · ${clip.name}'}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -604,6 +726,57 @@ class _Mesh3dViewState extends State<Mesh3dView>
       ),
     );
   }
+  /// The model, drawn by whichever renderer this machine turned out to have,
+  /// with [chrome] over it either way.
+  ///
+  /// **This is the only place the two paths meet.** Above it — the camera, the
+  /// clock, the clips, every key and every menu entry — there is one view and
+  /// it does not know. Below it, either the card draws into a texture or the
+  /// painter draws onto the canvas, and the two are asked to agree: the same
+  /// framing, the same three lights, the same two-sidedness. Where they
+  /// deliberately differ is that the card has a depth buffer, so it needs
+  /// neither the back-to-front sort nor the dropped far side of a solid, and
+  /// nothing interpenetrating comes out wedged.
+  Widget _picture(ThemeData theme, Widget chrome) {
+    final texture = _texture;
+    if (texture != null) {
+      return _Mesh3dSurface(
+        texture: texture,
+        request: _FrameRequest(
+          yaw: _yaw,
+          pitch: _pitch,
+          zoom: _zoom,
+          pan: _pan,
+          look: _look,
+          skeleton: _skeleton && _hasSkeleton,
+          reflections: _reflections,
+          clip: _clips.isEmpty ? -1 : _clip,
+          frame: _frame.floor(),
+          fallback: _MeshPainter._visible(theme.colorScheme.primary).toARGB32(),
+        ),
+        child: chrome,
+      );
+    }
+    return CustomPaint(
+      painter: _MeshPainter(
+        scene: _scene,
+        images: _images,
+        look: _look,
+        skeleton: _skeleton || _scene.bonesOnly,
+        posed: _posed,
+        posedNormals: _posedNormals,
+        posedBones: _posedBones,
+        yaw: _yaw,
+        pitch: _pitch,
+        zoom: _zoom,
+        pan: _pan,
+        background: theme.colorScheme.surface,
+        fallback: theme.colorScheme.primary,
+      ),
+      child: chrome,
+    );
+  }
+
   /// The ways of looking, as a row of switches standing on the model.
   ///
   /// Three of them are one choice and the fourth is a thing on its own, so the
@@ -619,15 +792,23 @@ class _Mesh3dViewState extends State<Mesh3dView>
             on: _look == look,
             onPressed: () => setState(() => _look = look),
           ),
-        if (_hasSkeleton) ...[
-          const ViewportRule(),
+        // Behind one divider, whichever of the two there is to show: a rule per
+        // switch would say each was its own kind of thing.
+        if (_hasSkeleton || _texture != null) const ViewportRule(),
+        if (_hasSkeleton)
           ViewportSwitch(
             icon: Icons.polyline_outlined,
             message: '${tr('Bones over the model')}  B',
             on: _skeleton,
             onPressed: () => setState(() => _skeleton = !_skeleton),
           ),
-        ],
+        if (_texture != null)
+          ViewportSwitch(
+            icon: Icons.blur_on,
+            message: '${tr('Reflections')}  R',
+            on: _reflections,
+            onPressed: () => setState(() => _reflections = !_reflections),
+          ),
       ],
     );
   }
@@ -787,6 +968,7 @@ class _Scene {
     required this.centre,
     required this.radius,
     required this.triangles,
+    this.bones = 0,
     this.solid = const [],
   });
 
@@ -794,10 +976,9 @@ class _Scene {
     var minX = double.infinity, minY = double.infinity, minZ = double.infinity;
     var maxX = -double.infinity, maxY = -double.infinity, maxZ = -double.infinity;
     var triangles = 0;
+    var bones = 0;
 
-    for (final mesh in meshes) {
-      triangles += mesh.triangleCount;
-      final p = mesh.positions;
+    void take(Float32List p) {
       for (var i = 0; i + 2 < p.length; i += 3) {
         if (p[i] < minX) minX = p[i];
         if (p[i] > maxX) maxX = p[i];
@@ -808,7 +989,25 @@ class _Scene {
       }
     }
 
-    if (triangles == 0 || minX > maxX) {
+    for (final mesh in meshes) {
+      triangles += mesh.triangleCount;
+      bones += mesh.boneCount;
+      take(mesh.positions);
+    }
+
+    // A file with no mesh in it at all — a rig and its clips, which is what
+    // most animation files are — is drawn as its skeleton, so the skeleton is
+    // what gets framed. Only then: over a model the bones are inside it, and
+    // counting them would move the framing of every rigged character there is
+    // by however far its end bones stick out of it.
+    if (triangles == 0) {
+      for (final mesh in meshes) {
+        final rest = mesh.bones;
+        if (rest != null && mesh.boneCount > 0) take(rest);
+      }
+    }
+
+    if ((triangles == 0 && bones == 0) || minX > maxX) {
       return _Scene(
         meshes: const [],
         centre: const [0.0, 0.0, 0.0],
@@ -832,6 +1031,7 @@ class _Scene {
       centre: centre,
       radius: radius,
       triangles: triangles,
+      bones: bones,
       solid: [for (final mesh in meshes) _solidity(mesh)],
     );
   }
@@ -915,10 +1115,16 @@ class _Scene {
   final double radius;
   final int triangles;
 
+  /// How many bones the meshes carry between them.
+  final int bones;
+
   /// Per mesh, what [_solidity] found.
   final List<int> solid;
 
-  bool get isEmpty => triangles == 0;
+  bool get isEmpty => triangles == 0 && bones == 0;
+
+  /// A skeleton with no mesh on it, which is drawn as the bones alone.
+  bool get bonesOnly => triangles == 0 && bones > 0;
 }
 
 /// One frame's worth of arithmetic.
@@ -1189,6 +1395,9 @@ class _MeshPainter extends CustomPainter {
     }
 
     if (kept == 0) {
+      // Nothing solid to draw — a skeleton with no mesh on it, most often — is
+      // no reason not to draw the bones.
+      _drawBones(canvas, camera, scale, originX, originY);
       canvas.restore();
       return;
     }
@@ -1378,4 +1587,167 @@ class _MeshPainter extends CustomPainter {
       old.zoom != zoom ||
       old.pan != pan ||
       old.fallback != fallback;
+}
+
+/// Everything the card has to be told to draw one frame.
+///
+/// A value with an equality, so the surface can tell a rebuild that changed
+/// something from a rebuild that changed nothing, and ask for a picture only
+/// for the first kind. The frame is an `int` because a baked clip has no
+/// half-frames — the slider's fractional position is for the clock and the
+/// caption, not for the card.
+@immutable
+class _FrameRequest {
+  const _FrameRequest({
+    required this.yaw,
+    required this.pitch,
+    required this.zoom,
+    required this.pan,
+    required this.look,
+    required this.skeleton,
+    required this.reflections,
+    required this.clip,
+    required this.frame,
+    required this.fallback,
+  });
+
+  final double yaw;
+  final double pitch;
+  final double zoom;
+  final Offset pan;
+  final MeshLook look;
+  final bool skeleton;
+  final bool reflections;
+
+  /// Which clip, or −1 when the model is standing in its rest pose.
+  final int clip;
+  final int frame;
+
+  /// The theme's own colour, for a mesh whose file named none.
+  final int fallback;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _FrameRequest &&
+      other.yaw == yaw &&
+      other.pitch == pitch &&
+      other.zoom == zoom &&
+      other.pan == pan &&
+      other.look == look &&
+      other.skeleton == skeleton &&
+      other.reflections == reflections &&
+      other.clip == clip &&
+      other.frame == frame &&
+      other.fallback == fallback;
+
+  @override
+  int get hashCode => Object.hash(yaw, pitch, zoom, pan, look, skeleton,
+      reflections, clip, frame, fallback);
+}
+
+/// The picture the graphics card made, with the chrome over it.
+///
+/// It owns one thing the view above it cannot: the size in real pixels, which
+/// is not known until a layout has happened. So this is where a frame is asked
+/// for — on every change of the request, and on every change of the box.
+class _Mesh3dSurface extends StatefulWidget {
+  const _Mesh3dSurface({
+    required this.texture,
+    required this.request,
+    required this.child,
+  });
+
+  /// The texture the native side registered. Also names the model to it: one
+  /// surface, one model, one id.
+  final int texture;
+
+  final _FrameRequest request;
+  final Widget child;
+
+  @override
+  State<_Mesh3dSurface> createState() => _Mesh3dSurfaceState();
+}
+
+class _Mesh3dSurfaceState extends State<_Mesh3dSurface> {
+  Size _size = Size.zero;
+  double _ratio = 1;
+
+  /// Whether a frame is being drawn, and whether anything moved while it was.
+  bool _drawing = false;
+  bool _waiting = false;
+
+  @override
+  void didUpdateWidget(_Mesh3dSurface old) {
+    super.didUpdateWidget(old);
+    if (old.request != widget.request || old.texture != widget.texture) _ask();
+  }
+
+  /// One frame at a time, and one more after it if anything changed meanwhile.
+  ///
+  /// Deliberately not a queue. An orbit under the mouse asks sixty times a
+  /// second and a queue would fill with pictures nobody will ever see; the last
+  /// thing asked for is the only one worth drawing. So what is remembered is
+  /// *that* something was asked, never what.
+  void _ask() {
+    if (_size.isEmpty) return;
+    if (_drawing) {
+      _waiting = true;
+      return;
+    }
+    _drawing = true;
+    final request = widget.request;
+    Mesh3dChannel.frame(
+      widget.texture,
+      width: (_size.width * _ratio).round(),
+      height: (_size.height * _ratio).round(),
+      yaw: request.yaw,
+      pitch: request.pitch,
+      zoom: request.zoom,
+      panX: request.pan.dx * _ratio,
+      panY: request.pan.dy * _ratio,
+      look: request.look.index,
+      skeleton: request.skeleton,
+      reflections: request.reflections,
+      clip: request.clip,
+      frame: request.frame,
+      fallback: request.fallback,
+    ).whenComplete(() {
+      _drawing = false;
+      if (!mounted || !_waiting) return;
+      _waiting = false;
+      _ask();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = constraints.biggest;
+        if (size != _size || ratio != _ratio) {
+          _size = size;
+          _ratio = ratio;
+          // A frame cannot be asked for from inside a build, and the size it
+          // would be asked at is not known any earlier than one.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _ask();
+          });
+        }
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            // Unfiltered: the picture was made at the size it is shown at, and
+            // resampling would only soften edges the card has already
+            // antialiased.
+            Texture(
+              textureId: widget.texture,
+              filterQuality: FilterQuality.none,
+            ),
+            widget.child,
+          ],
+        );
+      },
+    );
+  }
 }

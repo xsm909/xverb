@@ -5,12 +5,15 @@ import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../../core/plugins/grammar.dart';
 import '../../core/plugins/plugin_manifest.dart';
 import '../../core/plugins/viewer.dart';
 import '../../core/settings/appearance_settings.dart';
 import '../../core/settings/settings_store.dart';
 import '../../core/vfs/file_entry.dart';
 import '../motion.dart';
+import '../widgets/hint.dart';
+import 'code_syntax.dart';
 import 'thumbnails.dart';
 
 /// The files in [listing] that a viewer declaring [spec] can open, in the
@@ -115,6 +118,61 @@ Size cellShape(Size? picture, double room) {
       : Size(room * proportion, room);
 }
 
+/// What a cell in the strip is known by: the name of the file in it.
+///
+/// For whoever has to find one — a test, mostly. A cell used to be found by
+/// the name written in it, and a page writes a long name shortened.
+class FilmStripCellKey extends ValueKey<String> {
+  const FilmStripCellKey(super.value);
+}
+
+/// The name along the bottom of a page.
+const Key kStripCaption = ValueKey<String>('film-strip-caption');
+
+/// How many letters of the start of a name a cut keeps before it gives any
+/// room to the end — see [middleOut].
+const int _first = 4;
+
+/// [name], cut in the middle until [fits] takes it.
+///
+/// **The start first, then the end.** The start of a name is what tells two
+/// files of one kind apart, and a strip is nearly always all of one kind: the
+/// first cut gave the extension its room before anything else, and wrote
+/// `…dart` under every cell of a folder of Dart. So [_first] letters of the
+/// start come before anything; then the extension, whole where it is short
+/// enough to be one, because `film_strip_test.dart` and `film_strip.dart` cut
+/// at the end are the same word; and a third of whatever is left goes to the
+/// letters just before it. A single ellipsis is what is left when nothing
+/// fits.
+String middleOut(String name, bool Function(String text) fits) {
+  if (fits(name)) return name;
+  final dot = name.lastIndexOf('.');
+  final extension = dot > 0 && name.length - dot <= 8 ? name.length - dot : 0;
+
+  String cut(int keep) {
+    final tail = keep <= _first
+        ? 0
+        : math.min(extension, keep - _first) +
+              math.max(0, keep - _first - extension) ~/ 3;
+    return '${name.substring(0, keep - tail)}…'
+        '${name.substring(name.length - tail)}';
+  }
+
+  var best = '…';
+  var low = 1, high = name.length - 1;
+  while (low <= high) {
+    final keep = (low + high) ~/ 2;
+    final candidate = cut(keep);
+    if (fits(candidate)) {
+      best = candidate;
+      low = keep + 1;
+    } else {
+      high = keep - 1;
+    }
+  }
+  return best;
+}
+
 /// How the strip lays the folder out once it is folded.
 ///
 /// **Two, because the two things it can be are worth different prices.** The
@@ -173,12 +231,16 @@ enum StripFold {
 /// The grid is built from the floor up, so a folder that only makes two rows
 /// makes them at the bottom and leaves the picture above it alone.
 ///
-/// **A cell that has no thumbnail says the file's name**, and that is not a
-/// placeholder — it is what a strip of text files, or of pictures in a format
-/// the machine's decoder will not read, honestly looks like. Only that cell
-/// has a surface, because a word needs something to be written on. See
-/// [ThumbnailCache] for which formats those are and why it is the machine's
-/// answer rather than ours.
+/// **A cell that has no thumbnail is a page of the file.** It used to say the
+/// file's name and nothing else, which along a strip of text files was a row
+/// of grey squares with words broken across them — every one alike, and none
+/// of them a picture of anything. Now it is the file's first lines on the
+/// reading's own paper, coloured the way the reading colours them, with the
+/// name along the bottom cut to fit — see [middleOut] — and the whole of it in
+/// a hint where the pointer rests. A file that is not text has its extension
+/// written large instead. See [ThumbnailCache] for which files have
+/// no picture and why that is the machine's answer rather than ours, and
+/// [pageLines] for what counts as text.
 class FilmStrip extends StatefulWidget {
   const FilmStrip({
     super.key,
@@ -190,6 +252,7 @@ class FilmStrip extends StatefulWidget {
     this.active = true,
     this.rows = SettingsStore.defaultStripRows,
     this.fold = StripFold.ranks,
+    this.grammarOf,
   });
 
   /// The neighbours, in the order the panel had them.
@@ -222,6 +285,11 @@ class FilmStrip extends StatefulWidget {
 
   /// Which of the two arrangements it folds into, from the settings.
   final StripFold fold;
+
+  /// What language a file is written in, for the page a file with no picture
+  /// is drawn as. Null draws every page in the reading's ink alone, which is
+  /// what a caller with no plugins to ask — a test — gets.
+  final SyntaxGrammar? Function(FileEntry entry)? grammarOf;
 
   /// How tall one row is, given the interface size.
   ///
@@ -1039,7 +1107,9 @@ class _FilmStripState extends State<FilmStrip> with TickerProviderStateMixin {
                 child: Opacity(
                   opacity: _folded(plan, index) ? 1 : 1 - t,
                   child: _Cell(
+                    key: FilmStripCellKey(widget.entries[index].name),
                     entry: widget.entries[index],
+                    grammar: widget.grammarOf?.call(widget.entries[index]),
                     thumbnails: widget.thumbnails,
                     theme: theme,
                     current: index == widget.current,
@@ -1154,14 +1224,306 @@ class _FilmStripState extends State<FilmStrip> with TickerProviderStateMixin {
   }
 }
 
-/// One file in the strip: its picture if there is one, its name if there is
-/// not, and a frame round it when it is the one being looked at.
+/// The graph a cell draws for a file that is neither a picture nor text — see
+/// [byteDensity]. For tests.
+const Key kStripDensity = ValueKey('strip-density');
+
+/// How dense a file's bytes are along it: a ground filled to the height of
+/// each column, and a line along its top.
+///
+/// **A step per column, not a line through their middles.** A column is a
+/// stretch of the file, counted as one, and a slope between two would claim
+/// something about the bytes in between that nobody counted.
+class _DensityPainter extends CustomPainter {
+  _DensityPainter(this.density, this.ink);
+
+  final List<double> density;
+  final Color ink;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (density.isEmpty || size.isEmpty) return;
+    final step = size.width / density.length;
+    final top = Path()..moveTo(0, size.height * (1 - density.first));
+    for (var column = 0; column < density.length; column++) {
+      final y = size.height * (1 - density[column]);
+      top
+        ..lineTo(column * step, y)
+        ..lineTo((column + 1) * step, y);
+    }
+    final ground = Path.from(top)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(ground, Paint()..color = ink.withValues(alpha: 0.16));
+    canvas.drawPath(
+      top,
+      Paint()
+        ..color = ink.withValues(alpha: 0.6)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_DensityPainter old) =>
+      !identical(old.density, density) || old.ink != ink;
+}
+
+/// A file with no picture, drawn as a page of it: its first lines on the
+/// reading's own paper, and its name along the bottom. A file that is not text
+/// is drawn as how dense its bytes are instead.
+///
+/// **Set as a page and then shrunk, not set small.** The lines are laid out
+/// [_PageState._columns] letters wide at a size text is meant to be set at,
+/// and the whole sheet is scaled down into the cell — so a page keeps its
+/// proportions whatever size the strip is, and a cell twice as tall shows the
+/// same page twice as large rather than twice as many lines of it.
+class _Page extends StatefulWidget {
+  const _Page({
+    required this.entry,
+    required this.lines,
+    required this.grammar,
+    required this.theme,
+    this.density,
+  });
+
+  final FileEntry entry;
+
+  /// The file's first lines, or null where it is not text — see [pageLines].
+  final List<String>? lines;
+
+  /// How dense its bytes are along it, where it is not text — see
+  /// [byteDensity]. Null for text, and for a file of nothing.
+  final List<double>? density;
+
+  final SyntaxGrammar? grammar;
+  final AppearanceSettings theme;
+
+  @override
+  State<_Page> createState() => _PageState();
+}
+
+class _PageState extends State<_Page> {
+  /// How wide the page is set, in letters, before it is shrunk into the cell:
+  /// enough of a line of code to see its indentation, and few enough that the
+  /// shrinking leaves something of the shape of a word.
+  static const int _columns = 40;
+  static const double _letter = 10;
+  static const double _margin = 8;
+
+  /// The page as spans, made once. The strip builds every cell again on every
+  /// frame of a fold, and colouring four kilobytes of code thirty cells at a
+  /// time is sixty times a second more often than it needs doing.
+  TextSpan? _text;
+  Object? _textFor;
+
+  /// The name as the caption writes it, kept for the same reason: cutting it
+  /// to fit is a measurement for every length tried.
+  String? _caption;
+  Object? _captionFor;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = widget.lines;
+    final written =
+        lines != null && lines.any((line) => line.trim().isNotEmpty);
+    final density = widget.density;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: written
+              ? _sheet(lines)
+              : density != null && density.isNotEmpty
+              ? _graph(density)
+              : _kind(),
+        ),
+        _label(context),
+      ],
+    );
+  }
+
+  /// A file that is not text, drawn as how dense its bytes are along it — see
+  /// [byteDensity] — with what kind it is small in the corner, where the square
+  /// used to have nothing else to say.
+  Widget _graph(List<double> density) {
+    final ink = widget.theme.readingForeground;
+    final kind = widget.entry.extension.toUpperCase();
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 6, 4, 3),
+          child: CustomPaint(
+            key: kStripDensity,
+            painter: _DensityPainter(density, ink),
+          ),
+        ),
+        if (kind.isNotEmpty && kind.length <= 5)
+          Positioned(
+            left: 5,
+            top: 3,
+            child: Text(
+              kind,
+              style: TextStyle(
+                color: ink.withValues(alpha: 0.5),
+                fontSize: widget.theme.fontSize - 4,
+                fontWeight: FontWeight.w700,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _sheet(List<String> lines) => FittedBox(
+    fit: BoxFit.fitWidth,
+    alignment: Alignment.topLeft,
+    clipBehavior: Clip.hardEdge,
+    child: SizedBox(
+      width: _columns * _letter * 0.6 + _margin * 2,
+      child: Padding(
+        padding: const EdgeInsets.all(_margin),
+        child: Text.rich(
+          _textOf(lines),
+          softWrap: false,
+          overflow: TextOverflow.clip,
+          // The page is shrunk to fit whatever the interface size is, so
+          // scaling its letters as well would only change how much of a line
+          // is on it.
+          textScaler: TextScaler.noScaling,
+        ),
+      ),
+    ),
+  );
+
+  /// A file that is not text: what kind it is, written large — the one thing
+  /// about it the strip can say without reading it as something it is not.
+  Widget _kind() {
+    final ink = widget.theme.readingForeground.withValues(alpha: 0.4);
+    final kind = widget.entry.extension.toUpperCase();
+    return Center(
+      child: FractionallySizedBox(
+        widthFactor: 0.62,
+        heightFactor: 0.5,
+        child: FittedBox(
+          child: kind.isEmpty || kind.length > 5
+              ? Icon(Icons.insert_drive_file_outlined, color: ink)
+              : Text(
+                  kind,
+                  style: TextStyle(
+                    color: ink,
+                    fontWeight: FontWeight.w700,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+
+  /// The name, one line along the bottom, in the header's colours: the page
+  /// is the file's and the label is the application's.
+  Widget _label(BuildContext context) {
+    final theme = widget.theme;
+    final style = TextStyle(
+      color: theme.headerForeground.withValues(alpha: 0.85),
+      fontSize: theme.fontSize - 3,
+      height: 1.25,
+      decoration: TextDecoration.none,
+    );
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    return ColoredBox(
+      color: theme.effectiveHeaderBackground,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: LayoutBuilder(
+          builder: (context, box) => Text(
+            _captionOf(box.maxWidth, style, scaler, direction),
+            key: kStripCaption,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.clip,
+            textAlign: TextAlign.center,
+            style: style,
+            textScaler: scaler,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _captionOf(
+    double width,
+    TextStyle style,
+    TextScaler scaler,
+    TextDirection direction,
+  ) {
+    final name = widget.entry.name;
+    final key = (name, width, style, scaler, direction);
+    final known = _caption;
+    if (known != null && _captionFor == key) return known;
+    _captionFor = key;
+    return _caption = middleOut(name, (text) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final fits = painter.width <= width;
+      painter.dispose();
+      return fits;
+    });
+  }
+
+  TextSpan _textOf(List<String> lines) {
+    final theme = widget.theme;
+    final grammar = widget.grammar;
+    final key = (lines, grammar, theme);
+    final known = _text;
+    if (known != null && _textFor == key) return known;
+    final style = TextStyle(
+      fontFamily: theme.consoleFamily,
+      fontSize: _letter,
+      height: 1.2,
+      color: theme.readingForeground,
+      decoration: TextDecoration.none,
+    );
+    final source = lines.join('\n');
+    _textFor = key;
+    return _text = grammar == null
+        ? TextSpan(text: source, style: style)
+        // Coloured as the reading would colour it. [CodeColours] asks the
+        // surface it is drawn on for its greys, and this one is drawn on the
+        // reading's paper rather than the panel's — see [appearanceOf].
+        : codeSpans(
+            source,
+            grammar,
+            style,
+            CodeColours.of(
+              theme.copyWith(
+                panelBackground: theme.readingBackground,
+                panelForeground: theme.readingForeground,
+              ),
+            ),
+          );
+  }
+}
+
+/// One file in the strip: its picture if there is one, a page of it if there
+/// is not, and a frame round it when it is the one being looked at.
 ///
 /// It is given no size of its own — the strip places it, in both arrangements
 /// and on the way between them.
 class _Cell extends StatefulWidget {
   const _Cell({
+    super.key,
     required this.entry,
+    this.grammar,
     required this.thumbnails,
     required this.theme,
     required this.current,
@@ -1172,6 +1534,9 @@ class _Cell extends StatefulWidget {
   });
 
   final FileEntry entry;
+
+  /// The language its page is coloured by, where it has no picture.
+  final SyntaxGrammar? grammar;
   final ThumbnailCache thumbnails;
   final AppearanceSettings theme;
   final bool current;
@@ -1193,6 +1558,14 @@ class _Cell extends StatefulWidget {
 class _CellState extends State<_Cell> {
   ui.Image? _image;
 
+  /// The file's first lines, where it has no picture and is text. The cell's
+  /// own reference, so a page the cache has since forgotten is still drawn.
+  List<String>? _page;
+
+  /// How dense its bytes are, where it has no picture and is not text — held
+  /// for the same reason as [_page].
+  List<double>? _density;
+
   /// Whether the pointer is on this one.
   bool _lit = false;
 
@@ -1206,9 +1579,9 @@ class _CellState extends State<_Cell> {
   /// picture or with a refusal.
   ///
   /// **Three states, not two, and that is the whole of it.** Waiting is not
-  /// the same as having nothing: a cell that writes the file's name while the
-  /// picture is on its way shows a word and then replaces it, so walking into
-  /// a folder is a row of names flickering into photographs. The name belongs
+  /// the same as having nothing: a cell that draws a page of the file while the
+  /// picture is on its way shows words and then replaces them, so walking into
+  /// a folder is a row of pages flickering into photographs. The page belongs
   /// to the third state only — asked, and there will never be a picture.
   bool _answered = false;
 
@@ -1243,6 +1616,8 @@ class _CellState extends State<_Cell> {
     if (ThumbnailCache.keyOf(old.entry) != ThumbnailCache.keyOf(widget.entry)) {
       _image?.dispose();
       _image = null;
+      _page = null;
+      _density = null;
       _answered = false;
       _asked = false;
     }
@@ -1258,6 +1633,8 @@ class _CellState extends State<_Cell> {
       return;
     }
     if (widget.thumbnails.refused(widget.entry)) {
+      _page = widget.thumbnails.pageOf(widget.entry);
+      _density = widget.thumbnails.densityOf(widget.entry);
       _answered = true;
       return;
     }
@@ -1273,9 +1650,12 @@ class _CellState extends State<_Cell> {
         return;
       }
       // Told either way. A refusal is an answer, and it is the one that puts
-      // the file's name in the cell.
+      // a page of the file in the cell.
       setState(() {
         _image = image;
+        _page = image == null ? widget.thumbnails.pageOf(widget.entry) : null;
+        _density =
+            image == null ? widget.thumbnails.densityOf(widget.entry) : null;
         _answered = true;
       });
       widget.onSettled?.call();
@@ -1285,7 +1665,6 @@ class _CellState extends State<_Cell> {
   @override
   Widget build(BuildContext context) {
     final theme = widget.theme;
-    final ink = theme.headerForeground;
     final image = _image;
 
     // **Bigger and leaning, under the pointer.** A strip is a table of
@@ -1335,12 +1714,11 @@ class _CellState extends State<_Cell> {
           // shadow: the frame is there from the first frame, the picture
           // arrives inside it, and nothing appears out of nothing.
           //
-          // A *surface* only where the file has no picture and never will: a
-          // word needs something to be written on. A photograph does not —
+          // A *sheet* only where the file has no picture and never will: the
+          // page of it is written on the reading's own paper, which is what
+          // the file would be on if it were opened. A photograph needs none —
           // what holds it apart from the picture behind it is the shadow.
-          color: _answered && image == null
-              ? theme.effectiveHeaderBackground.withValues(alpha: 0.86)
-              : null,
+          color: _answered && image == null ? theme.readingBackground : null,
           borderRadius: BorderRadius.circular(_corner),
           boxShadow: [
             BoxShadow(
@@ -1374,24 +1752,24 @@ class _CellState extends State<_Cell> {
           ),
         ),
         clipBehavior: Clip.antiAlias,
-        padding: image == null ? const EdgeInsets.all(3) : EdgeInsets.zero,
         child: image == null
             // Nothing at all until the machine has answered. What goes here
             // while a picture is on its way is an empty place for it, not a
-            // word that will be taken away again.
+            // page that will be taken away again.
             ? !_answered
                   ? const SizedBox.shrink()
-                  : Center(
-                      child: Text(
-                        widget.entry.name,
-                        maxLines: 3,
-                        textAlign: TextAlign.center,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: ink.withValues(alpha: 0.75),
-                          fontSize: theme.fontSize - 3,
-                          decoration: TextDecoration.none,
-                        ),
+                  // The whole name where the pointer rests, because the
+                  // caption has room for a few letters of it. Only on a page:
+                  // a photograph is reached for to be looked at, not to have
+                  // its name read, and a bubble over it would be in the way.
+                  : Hint(
+                      message: widget.entry.name,
+                      child: _Page(
+                        entry: widget.entry,
+                        lines: _page,
+                        density: _density,
+                        grammar: widget.grammar,
+                        theme: theme,
                       ),
                     )
             : RawImage(

@@ -57,7 +57,7 @@ DeskWindow updateOfferWindow({
           child: Text(tr('Install and restart')),
         ),
       ],
-      child: _WhatIsNew(notes: notes, running: running),
+      child: _WhatIsNew(notes: notes, running: running, offered: offered),
     ),
   );
   return window;
@@ -81,18 +81,38 @@ Future<UpdateAnswer> showUpdateOffer(
 }
 
 class _WhatIsNew extends StatelessWidget {
-  const _WhatIsNew({required this.notes, required this.running});
+  const _WhatIsNew({
+    required this.notes,
+    required this.running,
+    required this.offered,
+  });
 
   final List<String> notes;
   final ReleaseVersion running;
+  final ReleaseVersion offered;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final small = theme.textTheme.bodySmall;
+    final large = theme.textTheme.titleMedium;
     return ListView(
       padding: EdgeInsets.zero,
       children: [
+        // The two versions, large, before anything else. The title names the
+        // new one too, but a title is small and read last, and the question
+        // this window asks is a question about exactly these two numbers.
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 10,
+          children: [
+            Text('$running', style: large?.copyWith(color: theme.hintColor)),
+            Icon(Icons.arrow_forward, size: 18, color: theme.hintColor),
+            Text('$offered',
+                style: large?.copyWith(fontWeight: FontWeight.w600)),
+          ],
+        ),
+        const SizedBox(height: 4),
         Text(
           tr('You are running {version}.', {'version': '$running'}),
           style: small?.copyWith(color: theme.hintColor),

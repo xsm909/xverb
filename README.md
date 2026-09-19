@@ -49,7 +49,7 @@ here is the other column.
 
 | The core does not | What does |
 | --- | --- |
-| View or edit files | The viewer plugins — ten in the collection, from Markdown through 3D models to audio spectrograms. F3 asks the registry which one claims the extension and hands the file over; with none installed, F3 says so. |
+| View or edit files | The viewer plugins — twelve in the collection, from Markdown and spreadsheets through 3D models to audio spectrograms. F3 asks the registry which one claims the extension and hands the file over; with none installed, F3 says so. |
 | Speak FTP, SFTP, SMB or WebDAV | Transport plugins. `ftp`, `smb` and `web` are in the collection, standard library only. |
 | Understand archives | The `archives` plugin claims the extension and serves a `zip:` scheme, which is why Enter walks into a `.zip`. The core never learns what a ZIP is — see "Files that are really folders" in [docs/plugins.md](docs/plugins.md). |
 | Compare directories | The `compare` plugin: what is only on one side, and what is on both but different. |

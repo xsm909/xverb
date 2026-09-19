@@ -1,10 +1,72 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import '../../core/plugins/viewer.dart';
 import '../../core/vfs/file_entry.dart';
 import '../../core/vfs/fs_registry.dart';
+import '../../core/vfs/vfs_path.dart';
+import '../sheet/sheet_thumbnail.dart';
+import 'vector_view.dart';
+
+/// A small copy of [path] from whichever of [viewers] can make one — what
+/// [ThumbnailCache.askPlugin] is, wherever there are viewers to ask.
+///
+/// A viewer that draws its own is asked for it. **A viewer that reads a file
+/// into a drawing needs no picture of its own**: it is asked for the drawing,
+/// the one F3 would show, and the host paints it small — see
+/// [vectorThumbnail]. That is what gives an SVG a face on the strip.
+Future<Uint8List?> askViewers(
+  Iterable<RegisteredViewer> viewers,
+  VfsPath path,
+  int pixels,
+) async {
+  for (final viewer in viewers) {
+    final ask = viewer.thumbnail;
+    if (ask != null) {
+      final small = await ask(path, pixels);
+      if (small != null && small.isNotEmpty) return small;
+      continue;
+    }
+    // A sheet's reader gives a sheet, and the host draws its head small —
+    // the rows it opens on, as a page. A CSV used to be a page of its raw
+    // text here, commas and all; a workbook, a smear of its bytes.
+    if (_readsSheets(viewer)) {
+      final sheet = (await viewer.open(path)).sheet;
+      if (sheet == null) continue;
+      try {
+        final small = await sheetThumbnail(sheet, pixels);
+        if (small != null && small.isNotEmpty) return small;
+      } finally {
+        // A CSV source has begun counting the whole file; a thumbnail has
+        // no use for the count.
+        sheet.dispose();
+      }
+      continue;
+    }
+    if (viewer.spec.produces != 'drawing') continue;
+    final drawing = (await viewer.open(path)).drawing;
+    if (drawing == null || drawing.isEmpty) continue;
+    final small = await vectorThumbnail(drawing, pixels);
+    if (small != null && small.isNotEmpty) return small;
+  }
+  return null;
+}
+
+/// Whether [viewer] opens files as sheets: a plugin that says it produces
+/// spreadsheets, or a declarative viewer whose table the host draws as one.
+bool _readsSheets(RegisteredViewer viewer) {
+  if (viewer.spec.produces == 'spreadsheet') return true;
+  final render = viewer.spec.render;
+  if (render == null) return false;
+  final kind = render['kind'];
+  final source = render['source'];
+  return kind == 'sheet' ||
+      (kind == 'table' && source != 'json' && source != 'lines');
+}
 
 /// Small pictures of files, for the strip along the bottom of a viewer.
 ///
@@ -32,8 +94,9 @@ import '../../core/vfs/fs_registry.dart';
 ///
 /// - **at most [_atOnce] decodes are in flight**, so flying along a folder of
 ///   five hundred files queues rather than forks;
-/// - **a file over [maxBytes] is not read at all** — a thumbnail is not worth
-///   pulling a gigabyte through memory, and the cell says the name instead;
+/// - **a file over [maxBytes] is read no further than its first page** — a
+///   thumbnail is not worth pulling a gigabyte through memory, and the page
+///   the cell draws instead needs only [kPageBytes] of it;
 /// - **a refusal is remembered.** A file that cannot be decoded is asked once
 ///   and never again, which matters because failure is the slow answer.
 class ThumbnailCache {
@@ -74,6 +137,8 @@ class ThumbnailCache {
 
   final Map<String, Future<ui.Image?>> _live = {};
   final Map<String, ui.Image?> _done = {};
+  final Map<String, List<String>> _pages = {};
+  final Map<String, Float32List> _densities = {};
   final List<String> _order = [];
   int _running = 0;
   final List<Completer<void>> _waiting = [];
@@ -120,6 +185,16 @@ class ThumbnailCache {
     return _done.containsKey(key) && _done[key] == null;
   }
 
+  /// The first lines of a file that has no picture, if it is text: what the
+  /// strip draws the page of it from. Null for a file that is not text, has
+  /// not been read yet, or has been read and forgotten — see [pageLines].
+  List<String>? pageOf(FileEntry entry) => _pages[keyOf(entry)];
+
+  /// How dense the bytes of a file are along it, where it has no picture and
+  /// is not text: what the strip draws instead of a page. Null otherwise, and
+  /// for a file not read yet or read and forgotten — see [byteDensity].
+  Float32List? densityOf(FileEntry entry) => _densities[keyOf(entry)];
+
   /// Asks for one. Safe to call again for the same file: the second caller
   /// waits on the first request rather than starting a second.
   ///
@@ -137,14 +212,36 @@ class ThumbnailCache {
   Future<ui.Image?> _make(FileEntry entry, String key) async {
     await _slot();
     ui.Image? image;
+    List<String>? page;
+    Float32List? density;
     try {
-      if (!_disposed && entry.size <= maxBytes && entry.size > 0) {
-        image = await _decode(entry);
+      if (!_disposed && entry.size > 0) {
+        final bytes = await _read(entry);
+        if (bytes != null && bytes.isNotEmpty && !_disposed) {
+          // Past [maxBytes] only the first page was read, which is no picture
+          // of anything and is not offered to the decoder as one.
+          if (entry.size <= maxBytes) {
+            try {
+              image = await _decode(entry, bytes);
+            } on Object {
+              // A file that will not decode is a file with no thumbnail, which
+              // the strip already knows how to draw. It is not an error
+              // anybody has to be told about.
+              image = null;
+            }
+          }
+          // **The same bytes, not a second read.** Everything a page is made
+          // of was read already, to be offered to the decoder — and so is
+          // everything the picture of a file that is not text is made of.
+          if (image == null) {
+            page = pageLines(bytes);
+            if (page == null) density = byteDensity(bytes);
+          }
+        }
       }
     } on Object {
-      // A file that will not decode is a file with no thumbnail, which the
-      // strip already knows how to draw. It is not an error anybody has to
-      // be told about.
+      // A file that cannot be read at all has neither, and the strip draws it
+      // as a page with nothing written on it.
       image = null;
     } finally {
       _release();
@@ -155,28 +252,34 @@ class ThumbnailCache {
       image?.dispose();
       return null;
     }
-    _remember(key, image);
+    _remember(key, image, page, density);
     return image;
   }
 
-  Future<ui.Image?> _decode(FileEntry entry) async {
+  /// The file's bytes: all of them where it is small enough to be a
+  /// thumbnail, and only its first [kPageBytes] where it is not — a log of
+  /// half a gigabyte has a first page as much as a note does.
+  Future<Uint8List?> _read(FileEntry entry) async {
+    final whole = entry.size <= maxBytes;
     final provider = fileSystems.resolve(entry.path);
     final builder = BytesBuilder(copy: false);
     await for (final chunk in provider.openRead(entry.path)) {
       builder.add(chunk);
+      if (!whole && builder.length >= kPageBytes) break;
       // A file that grew since it was listed, or a provider that does not know
       // its own sizes. Stop rather than fill memory.
       if (builder.length > maxBytes) return null;
     }
-    final bytes = builder.takeBytes();
-    if (bytes.isEmpty || _disposed) return null;
+    return builder.takeBytes();
+  }
 
+  Future<ui.Image?> _decode(FileEntry entry, Uint8List bytes) async {
     try {
       return await _fromBytes(bytes);
     } on Object {
       // The engine does not read this format on this machine. Whoever opens
       // the file may still be able to draw it, so ask them for a small copy
-      // rather than putting a name in the cell.
+      // rather than putting a page of it in the cell.
       final ask = askPlugin;
       if (ask == null || _disposed) rethrow;
       final small = await ask(entry, pixels);
@@ -249,12 +352,21 @@ class ThumbnailCache {
     }
   }
 
-  void _remember(String key, ui.Image? image) {
+  void _remember(
+    String key,
+    ui.Image? image,
+    List<String>? page,
+    Float32List? density,
+  ) {
     _done[key] = image;
+    if (page != null) _pages[key] = page;
+    if (density != null) _densities[key] = density;
     _order.add(key);
     while (_order.length > keep) {
       final oldest = _order.removeAt(0);
       _done.remove(oldest)?.dispose();
+      _pages.remove(oldest);
+      _densities.remove(oldest);
     }
   }
 
@@ -283,6 +395,128 @@ class ThumbnailCache {
       image?.dispose();
     }
     _done.clear();
+    _pages.clear();
+    _densities.clear();
     _order.clear();
   }
+}
+
+/// How much of a file the page drawn for it is made from: a few dozen lines of
+/// anything, and on a file too big to be a thumbnail the only part read.
+const int kPageBytes = 4096;
+
+/// How many columns the picture of a file's bytes has — see [byteDensity].
+const int kDensityColumns = 64;
+
+/// How many bytes of each column are counted: enough for the count to mean
+/// something, and few enough that the whole picture costs well under a
+/// millisecond however big the file is.
+const int kDensitySample = 1024;
+
+/// The picture of a file that has no picture and is not text: how dense its
+/// bytes are, from its start to its end.
+///
+/// **Each column is a stretch of the file**, and its height is the entropy of
+/// the bytes counted there, as a fraction of the most that many bytes can
+/// hold. Nothing where the file is one byte over and over — padding, a region
+/// of nothing — and near the top where it is compressed or encrypted. So a zip
+/// is a high even wall, a program a skyline of code, tables and gaps, and an
+/// image of a disk mostly ground. It says something true about what is in the
+/// file, which a square with its extension in it does not.
+///
+/// **The same bytes, not a second read** — see [ThumbnailCache]. A file too
+/// big to be a thumbnail had only its first [kPageBytes] read, so its columns
+/// are of those and go no further. Null for a file of nothing.
+Float32List? byteDensity(Uint8List bytes) {
+  if (bytes.isEmpty) return null;
+  // At least a byte a column, so a tiny file has fewer columns rather than
+  // empty ones.
+  final columns = math.min(kDensityColumns, bytes.length);
+  final density = Float32List(columns);
+  final counts = Int32List(256);
+  for (var column = 0; column < columns; column++) {
+    final start = bytes.length * column ~/ columns;
+    final end = math.min(
+      bytes.length * (column + 1) ~/ columns,
+      start + kDensitySample,
+    );
+    final counted = end - start;
+    counts.fillRange(0, 256, 0);
+    for (var i = start; i < end; i++) {
+      counts[bytes[i]]++;
+    }
+    var entropy = 0.0;
+    for (final count in counts) {
+      if (count == 0) continue;
+      final share = count / counted;
+      entropy -= share * math.log(share);
+    }
+    // Sixteen bytes can hold at most four bits each, not eight: measured
+    // against what they could have held, a short column of noise is as full
+    // as a long one.
+    final most = math.log(math.min(256, counted));
+    density[column] = most == 0 ? 0 : (entropy / most).clamp(0, 1).toDouble();
+  }
+  return density;
+}
+
+/// The first lines of [bytes], if they are text — what a cell with no picture
+/// draws as a page of the file. Null where they are not.
+///
+/// **Text is decided by what is in it, not by the name.** A viewer that falls
+/// back on everything walks folders of `.bin`, `.dat` and files with no
+/// extension at all, and some of those are text and some are not. A byte of
+/// nothing is the mark of one that is not — no encoding in use writes one
+/// except UTF-16, and UTF-16 says so in its first two bytes — and control
+/// characters past one in twenty are the other.
+///
+/// **Drawn is the test, not spelt.** Text that is not UTF-8 is most often an
+/// eight-bit code page — a note written in Windows-1251 is the ordinary case
+/// here — and no code page can be told from another by looking at it. So it is
+/// read as Latin-1: the letters come out wrong and the page comes out right,
+/// which at the size a page is drawn is the only part anybody sees.
+List<String>? pageLines(Uint8List bytes, {int most = 40, int widest = 120}) {
+  final head = bytes.length > kPageBytes
+      ? Uint8List.sublistView(bytes, 0, kPageBytes)
+      : bytes;
+  final String text;
+  if (head.length >= 2 &&
+      ((head[0] == 0xFF && head[1] == 0xFE) ||
+          (head[0] == 0xFE && head[1] == 0xFF))) {
+    final little = head[0] == 0xFF;
+    text = String.fromCharCodes([
+      for (var i = 2; i + 1 < head.length; i += 2)
+        little ? head[i] | head[i + 1] << 8 : head[i] << 8 | head[i + 1],
+    ]);
+  } else {
+    if (head.contains(0)) return null;
+    final start = head.length >= 3 &&
+            head[0] == 0xEF &&
+            head[1] == 0xBB &&
+            head[2] == 0xBF
+        ? 3
+        : 0;
+    final body = Uint8List.sublistView(head, start);
+    final read = utf8.decode(body, allowMalformed: true);
+    final broken = '�'.allMatches(read).length;
+    text = broken * 20 > read.length ? latin1.decode(body) : read;
+  }
+
+  var controls = 0;
+  for (final unit in text.codeUnits) {
+    if (unit < 0x20 && unit != 0x09 && unit != 0x0A && unit != 0x0C &&
+        unit != 0x0D) {
+      controls++;
+    }
+  }
+  if (controls * 20 > text.length) return null;
+
+  final out = <String>[];
+  for (final raw in text.split('\n')) {
+    if (out.length == most) break;
+    final line = (raw.endsWith('\r') ? raw.substring(0, raw.length - 1) : raw)
+        .replaceAll('\t', '    ');
+    out.add(line.length > widest ? line.substring(0, widest) : line);
+  }
+  return out;
 }

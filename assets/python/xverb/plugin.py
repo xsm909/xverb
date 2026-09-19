@@ -17,11 +17,14 @@ A plugin is a directory with a ``plugin.json`` and a script that builds a
 from __future__ import annotations
 
 import base64
+import datetime as _dt
+import math
 import inspect
 import json
 import os
 import sys
-from typing import Callable, Dict, List, Optional
+from collections import OrderedDict
+from typing import Callable, Dict, List, Optional, Sequence
 
 from .fs import FileSystem
 from .rpc import RpcError, RpcPeer
@@ -795,6 +798,140 @@ def chart(
     return content
 
 
+class Sheet:
+    """One page of a workbook, as a plugin hands it to :meth:`Plugin.workbook`.
+
+    ``rows`` are the file's rows as they stand, a header row included: whether
+    the first one names the columns is guessed by the host the way it guesses
+    for a CSV, unless ``header`` says so — and the reader can overrule either.
+    A value in a row is a ``str``, an ``int``, a ``float``, a ``bool``,
+    ``None``, a date or a time, or :func:`sheet_cell` for a value with its own
+    text to show.
+
+    ``kinds`` is what each column holds — ``"text"``, ``"number"``,
+    ``"boolean"`` — for a plugin that knows better than a sample does.
+    ``message`` is shown in place of the rows when there are none, saying why.
+
+    **A sheet can still be being read.** Give a list that another thread goes
+    on appending to, and ``done`` — asked whenever the host wants to know —
+    saying when it has finished: the host shows the rows already there at
+    once, says the count is still growing, and asks again until it is not.
+    ``cancel`` is called when nobody wants the rest any more — the workbook
+    was put away, another page was turned to.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        rows: Sequence[Sequence[object]] = (),
+        header: Optional[bool] = None,
+        kinds: Optional[List[str]] = None,
+        message: str = "",
+        done: Optional[Callable[[], bool]] = None,
+        cancel: Optional[Callable[[], None]] = None,
+        merges: Optional[List[tuple]] = None,
+        notes: Optional[Dict[tuple, str]] = None,
+        hidden_rows: Optional[List[int]] = None,
+        hidden_columns: Optional[List[int]] = None,
+    ):
+        self.title = title
+        #: Cells joined into one, ``(top, left, bottom, right)`` in the file's
+        #: rows and columns; notes by ``(row, column)``; the rows and columns
+        #: the file hides. Lists a reading thread may go on filling: they are
+        #: sent once the sheet has been read.
+        self.merges = merges if merges is not None else []
+        self.notes = notes if notes is not None else {}
+        self.hidden_rows = hidden_rows if hidden_rows is not None else []
+        self.hidden_columns = hidden_columns if hidden_columns is not None else []
+        self.rows = rows
+        self.header = header
+        self.kinds = kinds
+        self.message = message
+        self.done = done
+        self.cancel = cancel
+        self._width: Optional[int] = None
+        self._measured = 0
+
+    @property
+    def counting(self) -> bool:
+        return self.done is not None and not self.done()
+
+    @property
+    def width(self) -> int:
+        # Measured over what has arrived since the last time, so a sheet still
+        # being read grows wider as its rows do without being walked again.
+        rows = self.rows
+        count = len(rows)
+        if self._width is None or self._measured < count:
+            start = self._measured if self._width is not None else 0
+            widest = self._width or 0
+            for r in range(start, count):
+                if len(rows[r]) > widest:
+                    widest = len(rows[r])
+            self._width = widest
+            self._measured = count
+        return self._width
+
+    def extras(self) -> dict:
+        """What the sheet says besides its cells, for the host."""
+        out = {}
+        if self.merges:
+            out["merges"] = [list(m) for m in self.merges]
+        if self.notes:
+            out["notes"] = [[r, c, t] for (r, c), t in self.notes.items()]
+        if self.hidden_rows:
+            out["hiddenRows"] = list(self.hidden_rows)
+        if self.hidden_columns:
+            out["hiddenColumns"] = list(self.hidden_columns)
+        return out
+
+    def drop(self) -> None:
+        if self.cancel is not None:
+            try:
+                self.cancel()
+            except Exception:  # noqa: BLE001 - letting go must not fail
+                pass
+
+
+def sheet_cell(value: object, text: Optional[str] = None,
+               role: Optional[str] = None) -> dict:
+    """A cell with more to it than its value.
+
+    ``text`` is how it is shown when that is not the value as it stands — a
+    number with the spreadsheet's own format on it, a date. ``role`` is
+    ``strong``, ``dim``, ``accent``, ``total`` or ``error``: a description,
+    never a colour, which the host's palette answers for.
+    """
+    out = {"v": _sheet_value(value)}
+    if text is not None:
+        out["t"] = text
+    if role:
+        out["r"] = role
+    return out
+
+
+def _sheet_value(value: object) -> object:
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, _dt.datetime):
+        text = value.isoformat(sep=" ")
+        if text.endswith(" 00:00:00"):
+            text = text[:-9]
+        return {"v": text, "t": text}
+    if isinstance(value, (_dt.date, _dt.time)):
+        text = value.isoformat()
+        return {"v": text, "t": text}
+    return str(value)
+
+
+def _sheet_rows(rows: Sequence[Sequence[object]]) -> list:
+    return [[_sheet_value(v) for v in row] for row in rows]
+
+
 def error(message: str) -> dict:
     """Content telling the user why a file could not be shown."""
     return {"kind": "error", "message": message}
@@ -1129,6 +1266,8 @@ class Plugin:
         #: The language the host is showing, as a code — `ru`, `de`, `en`.
         self.language: str = "en"
         self._strings: Dict[str, str] = {}
+        self._books: "OrderedDict[str, dict]" = OrderedDict()
+        self._next_book = 0
         self._register_methods()
 
     # -- contributions -----------------------------------------------------
@@ -1513,6 +1652,182 @@ class Plugin:
 
     # -- lifecycle ---------------------------------------------------------
 
+    #: Workbooks kept open for the host to ask for more rows of. A viewer is
+    #: opened again for every file the cursor rests on, and the host does not
+    #: say when it has stopped looking — so the oldest are let go.
+    KEEP_WORKBOOKS = 8
+
+    #: Rows sent with the answer that opens a sheet; the rest are asked for.
+    FIRST_ROWS = 256
+
+    def workbook(
+        self,
+        sheets: Sequence[object],
+        load: Optional[Callable[[int], "Sheet"]] = None,
+        open_at: int = 0,
+        menu: Optional[Sequence[tuple]] = None,
+        on_menu: Optional[Callable[[int, str, dict], Optional[dict]]] = None,
+        on_select: Optional[Callable[[int, dict], None]] = None,
+        on_activate: Optional[Callable[[int, int, int], Optional[dict]]] = None,
+    ) -> dict:
+        """Content for a sheet the host reads a screen at a time.
+
+        ``sheets`` is the workbook's pages, each a :class:`Sheet` — or, for a
+        workbook whose pages are worth reading only when somebody turns to
+        them, their titles, with ``load(index)`` giving the :class:`Sheet`
+        when it is wanted. The host shows ``open_at`` first, draws a pill to
+        choose another by when there is more than one, and asks for rows as
+        the reader scrolls::
+
+            @plugin.viewer("sheets.xlsx", "Workbook", extensions=["xlsx"])
+            def workbook(url):
+                book = read(url)
+                return plugin.workbook(book.titles, load=book.sheet)
+
+        Nothing has to be cut to a limit: only the rows on screen cross the
+        pipe.
+
+        **What the reader does, if the plugin wants to know.** ``menu`` is
+        rows ``(id, label)`` added under the host's own in the sheet's menu —
+        named now, because a menu is never made to wait for its rows — and
+        ``on_menu(sheet, id, selection)`` is called when one is chosen.
+        ``on_select(sheet, selection)`` hears where the selection settled,
+        and ``on_activate(sheet, row, column)`` Enter or a double click on a
+        cell. Rows are the file's rows, the header row among them; a selection
+        is ``{active: {row, column}, ranges: [{top, left, bottom, right}]}``,
+        an end left out where the range runs to the edge. ``on_menu`` and
+        ``on_activate`` may answer ``{"notice": text}`` to have something
+        said, ``{"copy": text}`` to put text on the clipboard, or both.
+        """
+        titles = [s.title if isinstance(s, Sheet) else str(s) for s in sheets]
+        if not titles:
+            return error("The file holds no sheets.")
+        self._next_book += 1
+        handle = "book-%d" % self._next_book
+        book = {
+            "titles": titles,
+            "load": load,
+            "loaded": {i: s for i, s in enumerate(sheets) if isinstance(s, Sheet)},
+            "on_menu": on_menu,
+            "on_select": on_select,
+            "on_activate": on_activate,
+        }
+        book["given"] = set(book["loaded"])
+        self._books[handle] = book
+        while len(self._books) > self.KEEP_WORKBOOKS:
+            _, old = self._books.popitem(last=False)
+            for sheet in old["loaded"].values():
+                sheet.drop()
+        at = open_at if 0 <= open_at < len(titles) else 0
+        answer = self._sheet_answer(book, at)
+        answer.update({"kind": "sheet", "handle": handle, "sheets": titles})
+        if menu:
+            answer["menu"] = [{"id": str(i), "label": str(label)} for i, label in menu]
+        if on_select is not None:
+            answer["selection"] = True
+        if on_activate is not None:
+            answer["activate"] = True
+        return answer
+
+    def _sheet(self, book: dict, index: int) -> "Sheet":
+        loaded = book["loaded"]
+        found = loaded.get(index)
+        if found is None:
+            load = book["load"]
+            if load is None:
+                raise RpcError("There is no sheet %d." % index)
+            found = load(index)
+            # Of the pages read on demand, only the one being looked at is
+            # kept — a workbook of forty pages turned through one by one
+            # would otherwise end up in memory whole. Pages handed over as
+            # they were are the plugin's to keep.
+            for key in [k for k in loaded if k not in book["given"]]:
+                loaded.pop(key).drop()
+            loaded[index] = found
+        return found
+
+    def _sheet_answer(self, book: dict, index: int) -> dict:
+        sheet = self._sheet(book, index)
+        counting = sheet.counting
+        answer = {
+            "sheet": index,
+            "rows": len(sheet.rows),
+            "columns": sheet.width,
+            "from": 0,
+            "cells": _sheet_rows(sheet.rows[: self.FIRST_ROWS]),
+        }
+        if counting:
+            answer["counting"] = True
+        else:
+            answer.update(sheet.extras())
+        if sheet.header is not None:
+            answer["header"] = bool(sheet.header)
+        if sheet.kinds is not None:
+            answer["kinds"] = list(sheet.kinds)
+        if sheet.message:
+            answer["message"] = sheet.message
+        return answer
+
+    def _book(self, params: dict) -> dict:
+        book = self._books.get(str(params.get("handle") or ""))
+        if book is None:
+            raise RpcError(
+                "This workbook is no longer open here. Open the file again."
+            )
+        self._books.move_to_end(str(params.get("handle")))
+        return book
+
+    def _sheet_open(self, params: dict) -> dict:
+        book = self._book(params)
+        index = int(params.get("sheet") or 0)
+        if not 0 <= index < len(book["titles"]):
+            raise RpcError("There is no sheet %d." % index)
+        return self._sheet_answer(book, index)
+
+    def _sheet_rows_rpc(self, params: dict) -> dict:
+        book = self._book(params)
+        sheet = self._sheet(book, int(params.get("sheet") or 0))
+        start = max(0, int(params.get("from") or 0))
+        count = max(0, min(int(params.get("count") or 0), 4096))
+        # Asked "done" first and counted after: a row that lands between the
+        # two is then counted in a reply that says there may be more.
+        counting = sheet.counting
+        answer = {
+            "from": start,
+            "cells": _sheet_rows(sheet.rows[start:start + count]),
+            "rows": len(sheet.rows),
+            "columns": sheet.width,
+            "counting": counting,
+        }
+        # The extras go with the question that follows the reading — asked
+        # for no rows — once the reading is over, and not with every piece.
+        if count == 0 and not counting:
+            answer.update(sheet.extras())
+        return answer
+
+    def _sheet_press(self, params: dict):
+        book = self._book(params)
+        handler = book.get("on_menu")
+        if handler is None:
+            return None
+        return handler(int(params.get("sheet") or 0), str(params.get("id") or ""),
+                       params.get("selection") or {})
+
+    def _sheet_select(self, params: dict):
+        book = self._book(params)
+        handler = book.get("on_select")
+        if handler is not None:
+            handler(int(params.get("sheet") or 0), params.get("selection") or {})
+        return None
+
+    def _sheet_activate(self, params: dict):
+        book = self._book(params)
+        handler = book.get("on_activate")
+        if handler is None:
+            return None
+        return handler(int(params.get("sheet") or 0), int(params.get("row") or 0),
+                       int(params.get("column") or 0))
+
     def run(self) -> None:
         """Serves the host until it asks the plugin to shut down."""
         self._peer.serve_forever()
@@ -1532,6 +1847,11 @@ class Plugin:
         peer.register("view.open", self._open_view)
         peer.register("view.event", self._view_event)
         peer.register("view.close", self._close_view)
+        peer.register("sheet.open", self._sheet_open)
+        peer.register("sheet.rows", self._sheet_rows_rpc)
+        peer.register("sheet.press", self._sheet_press)
+        peer.register("sheet.select", self._sheet_select)
+        peer.register("sheet.activate", self._sheet_activate)
         peer.register("fs.roots", self._fs_roots)
         peer.register("fs.defaultLocation", self._fs_default_location)
         peer.register("fs.list", self._fs_list)

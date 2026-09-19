@@ -30,6 +30,26 @@ const int kCursorAnimationDuration = 130;
 /// is that the two of them moved together.
 const int kColumnWidthDuration = 130;
 
+/// A step in the update window changing its mark — a ring turning into a tick,
+/// or into a cross.
+///
+/// Short: the steps come seconds apart at most, and a mark still changing when
+/// the next step begins reads as two things happening at once.
+const int kUpdateStepDuration = 240;
+
+/// The command line and the console folding away when the active panel walks
+/// onto a network location, and unfolding when it walks back.
+///
+/// Long enough to be seen going — a strip that vanished in a frame read as the
+/// window losing a piece of itself — and short, because the panels above are
+/// waiting for the room.
+const int kCommandLineFoldDuration = 260;
+
+/// The clock at the end of a panel's path bar coming out when the pointer
+/// arrives on the bar, and going back when it leaves — the trail beside it
+/// giving up the room as it comes.
+const int kHistoryClockDuration = 200;
+
 /// The mark that follows a dragged selection down a listing, and the outline
 /// that says which panel would take it.
 ///
@@ -139,6 +159,24 @@ const int kHintLeaveDuration = 90;
 
 /// A context menu unrolling.
 const int kContextMenuAnimationDuration = 240;
+
+/// A row in a menu stepping aside for one being carried past it, and a carried
+/// row settling into the place it was let go in — or back into its own, when it
+/// was not carried far enough to move. Alt+Up and Alt+Down glide the same way.
+///
+/// Shorter than the menu's own unrolling: the hand is still moving while the
+/// rows make way, and a gap that opens after the pointer has passed it is a gap
+/// nobody can aim at.
+const int kMenuRowGlideDuration = 200;
+
+/// A menu row that is there only sometimes — the history's offer to add the
+/// folder you are in — opening its place as it comes and closing it as it goes,
+/// so the rows under it are pushed rather than jumped.
+const int kMenuRowRevealDuration = 200;
+
+/// The thin rule under a list's pinned rows coming, going, or moving to close
+/// a different row.
+const int kMenuPinRuleDuration = 200;
 
 /// A remark arriving along the bottom of the window.
 const int kNoticeAnimationDuration = 240;

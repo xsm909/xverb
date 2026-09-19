@@ -209,12 +209,63 @@ class FolderHistory extends ChangeNotifier {
         for (final entry in (decoded['pinned'] as List? ?? const []))
           if (entry is String) entry,
       ];
-      return FolderHistory._(file, spent, recent, pinned);
+      // **No password on disk** (backlog 142). A file written before 1.1.0.467
+      // keyed a connection's folders by the whole URL, password and all. They
+      // are read back under the key they have now and written out at once,
+      // rather than left lying there until the application next closes.
+      final (bareSpent, bareRecent, barePinned, scrubbed) =
+          withoutPasswordsIn(spent, recent, pinned);
+      final history =
+          FolderHistory._(file, bareSpent, bareRecent, barePinned);
+      if (scrubbed) {
+        history._dirty = true;
+        await history.save();
+      }
+      return history;
     } on Object {
       // No support directory at all — a test, or a machine that will not give
       // us one. Nothing to read and nowhere to write.
       return FolderHistory._(null, {}, [], []);
     }
+  }
+
+  /// The three lists of a history file, keyed as they are now — with no
+  /// password in any key — and whether anything had to change. Two keys that
+  /// differed only by a password are one folder, so their times add up.
+  @visibleForTesting
+  static (Map<String, int>, List<String>, List<String>, bool)
+      withoutPasswordsIn(
+    Map<String, int> spent,
+    List<String> recent,
+    List<String> pinned,
+  ) {
+    var changed = false;
+    String bare(String key) {
+      try {
+        final now = _keyOf(VfsPath.parse(key));
+        if (now != key) changed = true;
+        return now;
+      } on Object {
+        // Will not parse: it is dropped later by [_paths], not guessed at here.
+        return key;
+      }
+    }
+
+    final times = <String, int>{};
+    for (final entry in spent.entries) {
+      final key = bare(entry.key);
+      times[key] = (times[key] ?? 0) + entry.value;
+    }
+    List<String> once(List<String> keys) {
+      final out = <String>[];
+      for (final key in keys) {
+        final now = bare(key);
+        if (!out.contains(now)) out.add(now);
+      }
+      return out;
+    }
+
+    return (times, once(recent), once(pinned), changed);
   }
 
   /// The panels are showing these folders, and nothing else.
@@ -228,7 +279,7 @@ class FolderHistory extends ChangeNotifier {
   void showing(Iterable<VfsPath?> places) {
     final keys = <String>{
       for (final place in places)
-        if (place != null) place.toString(),
+        if (place != null) _keyOf(place),
     };
 
     // **Evidence beats a report.** Nobody works a window they are not looking
@@ -347,7 +398,11 @@ class FolderHistory extends ChangeNotifier {
   }
 
   /// Whether [path] has been pinned.
-  bool isPinned(VfsPath path) => _pinned.contains(path.toString());
+  bool isPinned(VfsPath path) => _pinned.contains(_keyOf(path));
+
+  /// What a folder is written down as: the URL, with no password in it — see
+  /// [VfsPath.withoutPassword]. The history is a file on disk.
+  static String _keyOf(VfsPath path) => path.withoutPassword.toString();
 
   /// Pins [path], or takes the pin out of it.
   ///
@@ -358,7 +413,7 @@ class FolderHistory extends ChangeNotifier {
   /// Written out straight away, for the reason [clear] is: somebody who pins a
   /// folder and then loses power has not pinned it.
   Future<void> pin(VfsPath path, {required bool pinned}) async {
-    final key = path.toString();
+    final key = _keyOf(path);
     if (pinned == _pinned.contains(key)) return;
 
     if (pinned) {
@@ -373,25 +428,48 @@ class FolderHistory extends ChangeNotifier {
     await save();
   }
 
-  /// Moves a pinned folder [by] places up or down among the pinned ones.
+  /// Carries a folder [by] places up (negative) or down the list as it is
+  /// shown, and holds it where it lands.
   ///
-  /// **Only the pinned ones have an order to change.** The rest are ranked by
-  /// time, and a hand-placed row among them would be a row that jumps the next
-  /// time somebody works somewhere.
+  /// **A row put somewhere by hand is pinned there, and so is every row above
+  /// it.** The rest are ranked by time, so a row left unpinned where it was
+  /// put would be moved by the next minute of work somewhere else — and
+  /// pinning only that row would lift it over the rows it was dropped under.
+  /// The one way back is the other direction: a pinned row carried below the
+  /// last pin is let go, and returns to its place by time.
   ///
   /// Clamped rather than refused: a row dragged past the end lands at the end,
   /// which is what dragging past the end means everywhere else.
-  Future<void> movePin(VfsPath path, {required int by}) async {
-    final key = path.toString();
-    final from = _pinned.indexOf(key);
+  Future<void> place(VfsPath path, {required int by}) async {
+    final key = _keyOf(path);
+    final list = favourites.map(_keyOf).toList();
+    final from = list.indexOf(key);
     if (from < 0 || by == 0) return;
-
-    final to = (from + by).clamp(0, _pinned.length - 1);
+    final to = (from + by).clamp(0, list.length - 1);
     if (to == from) return;
 
-    _pinned
+    final order = [...list]
       ..removeAt(from)
       ..insert(to, key);
+    // Every pin is on the list and ahead of everything else, so the pins are
+    // the first this many rows of it.
+    final pins = _pinned.length;
+    final List<String> held;
+    if (!_pinned.contains(key)) {
+      held = order.take(to + 1 > pins + 1 ? to + 1 : pins + 1).toList();
+    } else if (to < pins) {
+      held = order.take(pins).toList();
+    } else {
+      held = [..._pinned]..remove(key);
+    }
+
+    // Pinning is remembering, as it is in [pin].
+    for (final pinned in held) {
+      if (!_recent.contains(pinned)) _recent.insert(0, pinned);
+    }
+    _pinned
+      ..clear()
+      ..addAll(held);
     _dirty = true;
     notifyListeners();
     await save();
@@ -434,7 +512,7 @@ class FolderHistory extends ChangeNotifier {
 
   /// How long has been spent in [path], the clock still running included.
   Duration timeIn(VfsPath path) =>
-      Duration(milliseconds: _totals()[path.toString()] ?? 0);
+      Duration(milliseconds: _totals()[_keyOf(path)] ?? 0);
 
   bool get isEmpty => _spent.isEmpty && _recent.isEmpty && _pinned.isEmpty;
 
@@ -469,7 +547,7 @@ class FolderHistory extends ChangeNotifier {
   /// Written out straight away, for the reason [clear] is: somebody who takes a
   /// folder out of a list and then loses power has not taken it out.
   Future<void> forget(VfsPath path) async {
-    final key = path.toString();
+    final key = _keyOf(path);
     final had = _spent.remove(key) != null;
     final listed = _recent.remove(key);
     // Forgetting a folder unpins it: a pin on a row that is not there is a pin

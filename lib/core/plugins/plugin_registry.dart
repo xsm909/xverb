@@ -337,6 +337,10 @@ class PluginRegistry extends ChangeNotifier {
 
   List<PluginEntry> get entries => _entries.values.toList(growable: false);
 
+  /// The manifest of the plugin standing under [pluginId], or null when none
+  /// is — asked by a page that knows which plugin drew it and nothing more.
+  PluginManifest? manifestOf(String pluginId) => _entries[pluginId]?.manifest;
+
   List<PluginCommand> get commands => _commands.values.toList(growable: false);
 
   List<RegisteredView> get views => _views.values.toList(growable: false);
@@ -795,6 +799,15 @@ class PluginRegistry extends ChangeNotifier {
 
   PythonRuntime? get runtime => _runtime;
 
+  /// Whether the machine has been looked at for an interpreter yet.
+  ///
+  /// [runtime] is null both before the look and after a look that found
+  /// nothing, and only the second means there is no Python. The first run's
+  /// offer asks this first, or it would flash up on every start-up for the
+  /// moment the look takes.
+  bool get runtimeChecked => _runtimeChecked;
+  bool _runtimeChecked = false;
+
   /// Null when Python was found; otherwise why *Python* plugins cannot run.
   /// Declarative extensions are unaffected.
   String? get runtimeProblem => _runtime == null ? PythonRuntime.lastError : null;
@@ -895,6 +908,7 @@ class PluginRegistry extends ChangeNotifier {
     disabled = Set.of(disabledIds);
     _pluginsDirectory = await _resolvePluginsDirectory();
     _runtime = await PythonRuntime.detect();
+    _runtimeChecked = true;
     await _seedShipped();
     await rescan();
   }
@@ -1682,7 +1696,18 @@ class PluginRegistry extends ChangeNotifier {
           if (result is! Map) {
             return ViewerContent.error('Viewer returned no content');
           }
-          return ViewerContent.fromJson(Map<String, dynamic>.from(result));
+          final content = ViewerContent.fromJson(
+            Map<String, dynamic>.from(result),
+            // A sheet goes on asking for rows after this call is over, over
+            // the same pipe, for as long as it is scrolled.
+            call: (method, params) => host.channel.call(
+              method,
+              params: params,
+              timeout: PythonPluginHost.callTimeout,
+            ),
+          );
+          content.sheet?.identity = path.toString();
+          return content;
         },
         thumbnail: !spec.thumbnails
             ? null
@@ -1783,7 +1808,14 @@ class PluginRegistry extends ChangeNotifier {
         timeout: PythonPluginHost.callTimeout,
       );
       if (result is! Map) return const ViewResponse();
-      return ViewResponse.fromJson(Map<String, dynamic>.from(result));
+      return ViewResponse.fromJson(
+        Map<String, dynamic>.from(result),
+        call: (method, params) => host.channel.call(
+          method,
+          params: params,
+          timeout: PythonPluginHost.callTimeout,
+        ),
+      );
     } on RpcException catch (e) {
       return ViewResponse.error(e.message);
     } on Object catch (e) {
@@ -1806,7 +1838,15 @@ class PluginRegistry extends ChangeNotifier {
   }
 
   void _appendLog(PluginLogRecord record) {
-    _log.add(record);
+    // **Never a password in the log** (backlog 142). A plugin is handed a
+    // connection's URL, and printing what it was given is the obvious thing
+    // to do — this is the one place every line of it passes through.
+    final message = withoutPasswords(record.message);
+    _log.add(
+      message == record.message
+          ? record
+          : PluginLogRecord(record.pluginId, record.level, message),
+    );
     if (_log.length > maxLogRecords) {
       _log.removeRange(0, _log.length - maxLogRecords);
     }

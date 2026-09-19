@@ -104,9 +104,15 @@ class LanguageOption {
   static const List<LanguageOption> shipped = [
     LanguageOption(code: 'en', name: 'English', endonym: 'English'),
     LanguageOption(code: 'ru', name: 'Russian', endonym: 'Русский'),
+    LanguageOption(code: 'uk', name: 'Ukrainian', endonym: 'Українська'),
     LanguageOption(code: 'es', name: 'Spanish', endonym: 'Español'),
     LanguageOption(code: 'de', name: 'German', endonym: 'Deutsch'),
     LanguageOption(code: 'fr', name: 'French', endonym: 'Français'),
+    LanguageOption(code: 'it', name: 'Italian', endonym: 'Italiano'),
+    // Bokmål, which nearly everybody writes. Nynorsk is the other standard,
+    // and would be a catalogue of its own.
+    LanguageOption(code: 'nb', name: 'Norwegian', endonym: 'Norsk bokmål'),
+    LanguageOption(code: 'fi', name: 'Finnish', endonym: 'Suomi'),
     // Hangul is no more drawable by the ordinary interface face than kana is,
     // so this one asks for the wide stack alongside Japanese.
     LanguageOption(
@@ -119,6 +125,14 @@ class LanguageOption {
       code: 'ja',
       name: 'Japanese',
       endonym: '日本語',
+      needsWideCoverage: true,
+    ),
+    // Simplified, as the mainland and Singapore write it. Traditional is a
+    // second catalogue and a second choice, not a setting of this one.
+    LanguageOption(
+      code: 'zh-Hans',
+      name: 'Chinese (Simplified)',
+      endonym: '简体中文',
       needsWideCoverage: true,
     ),
   ];
@@ -135,13 +149,32 @@ class LanguageOption {
 
   /// What "System" resolves to: the machine's language if one of ours matches
   /// it, and English otherwise.
-  static LanguageOption ofPlatform() {
-    // The tag looks like `ru_RU.UTF-8` or `ja_JP`; only the language matters.
-    final locale = Platform.localeName.split(RegExp('[_.-]')).first;
-    for (final option in shipped) {
-      if (option.code == locale) return option;
+  static LanguageOption ofPlatform() =>
+      matching(Platform.localeName) ?? shipped.first;
+
+  /// The shipped language a platform's locale tag means, or null for none.
+  ///
+  /// The tag looks like `ru_RU.UTF-8`, `ja_JP` or `zh-Hans-CN`, and for most
+  /// languages only its first part matters. **Chinese is the exception**: `zh`
+  /// is two ways of writing, and which one is said by the script or, failing
+  /// that, by the region. Taiwan, Hong Kong and Macau write Traditional, which
+  /// does not ship — so a machine there gets English rather than the other
+  /// script.
+  static LanguageOption? matching(String tag) {
+    final parts = tag.split(RegExp('[_.-]'));
+    var code = parts.first;
+    if (code == 'zh') {
+      const traditional = {'Hant', 'TW', 'HK', 'MO'};
+      code = parts.any(traditional.contains) ? 'zh-Hant' : 'zh-Hans';
     }
-    return shipped.first;
+    // Norwegian is written two ways too, and one of them ships. `no` is the
+    // language as a whole, and somebody set to Nynorsk reads Bokmål far more
+    // easily than English.
+    if (code == 'no' || code == 'nn') code = 'nb';
+    for (final option in shipped) {
+      if (option.code == code) return option;
+    }
+    return null;
   }
 
   /// The language a stored setting actually means.

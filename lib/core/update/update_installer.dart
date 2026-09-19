@@ -164,7 +164,13 @@ class UpdateInstaller {
     final executable = Platform.isWindows
         ? '${prepared.updaterBundle.path}\\xverb.exe'
         : '${prepared.updaterBundle.path}/xverb';
+    // **Started in its own folder, never in ours.** A child takes its parent's
+    // working directory, and ours is usually the installed copy — the Start
+    // menu shortcut says so. Windows will not rename a folder any process
+    // stands in, so an updater that inherited it held shut the very folder it
+    // had come to move, and ran its bar with nothing happening.
     await Process.start(executable, const [],
+        workingDirectory: prepared.updaterFolder.path,
         mode: ProcessStartMode.detachedWithStdio);
   }
 

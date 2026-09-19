@@ -2,6 +2,7 @@ import '../vfs/vfs_path.dart';
 import '../i18n/plugin_strings.dart';
 import 'plugin_manifest.dart';
 import 'viewer.dart';
+import '../sheet/plugin_sheet_source.dart' show SheetCall;
 
 /// What a view is pointed at, and where it was opened.
 ///
@@ -554,9 +555,11 @@ class ViewResponse {
   /// common answer and is accepted as one, so a view that draws and asks for
   /// nothing reads exactly like a viewer. The envelope with `content`,
   /// `actions`, `title` and `status` is for when it wants more.
-  factory ViewResponse.fromJson(Map<String, dynamic> json) {
+  ///
+  /// [call] is how a sheet in the answer asks the view's plugin for more rows.
+  factory ViewResponse.fromJson(Map<String, dynamic> json, {SheetCall? call}) {
     if (json.containsKey('kind') && !json.containsKey('content')) {
-      return ViewResponse(content: ViewerContent.fromJson(json));
+      return ViewResponse(content: ViewerContent.fromJson(json, call: call));
     }
 
     final content = json['content'];
@@ -570,7 +573,10 @@ class ViewResponse {
       saidMenus: json.containsKey('menus'),
       saidCommands: json.containsKey('commands'),
       content: content is Map
-          ? ViewerContent.fromJson(Map<String, dynamic>.from(content))
+          ? ViewerContent.fromJson(
+              Map<String, dynamic>.from(content),
+              call: call,
+            )
           : null,
       title: json['title'] as String?,
       status: json['status'] as String?,

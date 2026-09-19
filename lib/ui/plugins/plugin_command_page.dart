@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/i18n/i18n.dart';
+import '../../core/plugins/plugin_manifest.dart';
 import '../../core/plugins/plugin_registry.dart';
 import '../../core/plugins/viewer.dart';
 import '../../core/settings/settings_store.dart';
@@ -13,6 +14,7 @@ import '../notice.dart';
 import '../page_transition.dart';
 import '../viewer/plugin_viewer_page.dart';
 import '../widgets/escape_to_pop.dart';
+import 'plugin_about.dart';
 import '../widgets/title_bar.dart';
 import '../windows/window_layer.dart';
 
@@ -119,6 +121,14 @@ class _PluginCommandPageState extends State<PluginCommandPage> {
 
   String get title => widget.title;
 
+  /// The plugin behind the command, for the page's "about" — null for a page
+  /// drawn with nothing behind it.
+  PluginManifest? get _manifest {
+    final command = widget.command;
+    if (command == null) return null;
+    return context.read<AppState>().plugins.manifestOf(command.pluginId);
+  }
+
   ViewerContent get content => _content;
 
   /// A button on the page was pressed: back to the plugin with what it held.
@@ -176,6 +186,9 @@ class _PluginCommandPageState extends State<PluginCommandPage> {
         // nothing honest to put on the clipboard for either — and neither is
         // a page of several things, whose parts each want a different answer,
         // nor a form, whose text is the user's own and not the page's.
+        // A sheet is copied from its selection, in a format the clipboard
+        // task settles; the whole of it may be a million rows.
+        ViewerContentKind.sheet ||
         ViewerContentKind.form ||
         ViewerContentKind.image ||
         ViewerContentKind.chart ||
@@ -200,7 +213,19 @@ class _PluginCommandPageState extends State<PluginCommandPage> {
     final theme = context.watch<SettingsStore>().appearance;
     final canCopy = (_copyable ?? '').isNotEmpty;
 
-    return EscapeToPop(
+    final manifest = _manifest;
+
+    return Focus(
+      // F1 is the one key every page a plugin draws answers the same way.
+      canRequestFocus: false,
+      onKeyEvent: (node, event) {
+        if (manifest == null || !isPluginAboutKey(event)) {
+          return KeyEventResult.ignored;
+        }
+        unawaited(showPluginAbout(context, manifest: manifest));
+        return KeyEventResult.handled;
+      },
+      child: EscapeToPop(
       child: ColoredBox(
         color: theme.effectivePanelBackground,
         child: Column(
@@ -230,6 +255,15 @@ class _PluginCommandPageState extends State<PluginCommandPage> {
                   tooltip: tr('Copy'),
                   onPressed: canCopy ? () => _copy(context) : null,
                 ),
+                if (manifest != null)
+                  TitleBarButton(
+                    icon: Icons.help_outline,
+                    tooltip: '${tr('About {name}', {
+                      'name': manifest.displayName,
+                    })}  F1',
+                    onPressed: () =>
+                        unawaited(showPluginAbout(context, manifest: manifest)),
+                  ),
               ],
             ),
             Expanded(
@@ -252,6 +286,7 @@ class _PluginCommandPageState extends State<PluginCommandPage> {
             ),
           ],
         ),
+      ),
       ),
     );
   }

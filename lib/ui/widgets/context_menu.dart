@@ -43,10 +43,22 @@ class MenuItem extends MenuNode {
     this.isPinned,
     this.onDragged,
     this.hint,
+    this.isShown,
     required this.onSelected,
   });
 
   final String label;
+
+  /// Whether the row is there **right now**.
+  ///
+  /// A question, for the reason [isPinned] is one: the answer changes while
+  /// the menu is open. The history's offer to add a panel's folder appears the
+  /// moment a cross takes that folder's own row out. A hidden row is not
+  /// drawn, not walked onto by the arrows, not found by a search and not
+  /// picked by its letter.
+  final bool Function()? isShown;
+
+  bool get shown => isShown?.call() ?? true;
   final IconData? icon;
 
   /// A picture file to draw instead of [icon] — a plugin's own mark.
@@ -127,13 +139,13 @@ class MenuItem extends MenuNode {
   /// says the whole of it.
   final String? hint;
 
-  /// This row has been dragged [rows] places up (negative) or down.
+  /// This row has been carried [rows] places up (negative) or down — by the
+  /// hand, or by Alt+Up and Alt+Down from the keyboard.
   ///
-  /// **Only rows that have an order worth changing offer it.** In the folder
-  /// history that is the pinned ones: the rest are ranked by time, and a
-  /// hand-placed row among them would jump the next time somebody worked
-  /// somewhere. Null everywhere else, and the row is then not draggable at all
-  /// — a drag that does nothing is worse than no drag.
+  /// **Only rows that have an order worth changing offer it**, and the row
+  /// decides what a new place means: in the folder history a row put
+  /// somewhere is pinned there. Null everywhere else, and the row is then not
+  /// draggable at all — a drag that does nothing is worse than no drag.
   final void Function(int rows)? onDragged;
 
   /// Non-null renders a checkbox; used for toggles such as "show hidden".
@@ -480,12 +492,23 @@ class _ContextMenuRoute extends PopupRoute<void> {
 
 /// One column of the panel.
 class _Level {
-  _Level({required this.nodes, this.title});
+  _Level({required this.nodes, this.title, this.moves = 0});
 
   final List<MenuNode> nodes;
 
   /// The group this column came from; captioned at its head.
   final String? title;
+
+  /// How many times a row has been moved within this column — see
+  /// [_ContextMenuOverlayState._moveRow]. A row that finds this changed, and
+  /// its own index with it, has changed places, and glides there from where it
+  /// was drawn rather than appearing in the new place.
+  final int moves;
+
+  /// The row the hand is carrying, and where it would land if it were let go
+  /// now. Both null while nothing is carried. The rows in between make way.
+  int? carriedFrom;
+  int? carriedTo;
 
   /// Row the keyboard is on.
   int highlighted = -1;
@@ -581,7 +604,7 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
         ? _labelOf(level.nodes[level.highlighted])
         : null;
 
-    final fresh = _Level(nodes: rows, title: level.title);
+    final fresh = _Level(nodes: rows, title: level.title, moves: level.moves);
     if (was != null) {
       for (var i = 0; i < rows.length; i++) {
         if (_labelOf(rows[i]) == was) {
@@ -818,11 +841,21 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
         _closeDeepest();
         return KeyEventResult.handled;
 
+      // **Alt carries the row instead of the highlight** — the drag, from the
+      // keyboard, because a control the keyboard cannot reach does not exist.
+      // Claimed only where the row can be carried, so everywhere else Alt+Down
+      // goes on being Down.
       case LogicalKeyboardKey.arrowDown:
+        if (HardwareKeyboard.instance.isAltPressed && _carryHighlighted(1)) {
+          return KeyEventResult.handled;
+        }
         _moveHighlight(1);
         return KeyEventResult.handled;
 
       case LogicalKeyboardKey.arrowUp:
+        if (HardwareKeyboard.instance.isAltPressed && _carryHighlighted(-1)) {
+          return KeyEventResult.handled;
+        }
         _moveHighlight(-1);
         return KeyEventResult.handled;
 
@@ -978,6 +1011,7 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
     for (final node in _levels.last.nodes) {
       if (node is MenuItem &&
           node.enabled &&
+          node.shown &&
           node.accelerator?.toLowerCase() == wanted) {
         return node;
       }
@@ -997,7 +1031,7 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
       final level = _levels.last;
       final selectable = <int>[
         for (var i = 0; i < level.nodes.length; i++)
-          if (level.nodes[i] is! MenuSeparator) i,
+          if (_selectable(level.nodes[i])) i,
       ];
       if (selectable.isEmpty) return;
 
@@ -1062,6 +1096,28 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
     return true;
   }
 
+  /// Carries the row under the keyboard [by] places, exactly as a drag would.
+  /// Answers whether the row can be carried at all.
+  ///
+  /// Not while searching: the rows on screen are then the ones that matched,
+  /// and a place among them is not a place in the list.
+  bool _carryHighlighted(int by) {
+    if (_levels.isEmpty || _searching) return false;
+    final levelIndex = _levels.length - 1;
+    final level = _levels[levelIndex];
+    final at = level.highlighted;
+    if (at < 0 || at >= level.nodes.length) return false;
+    final node = level.nodes[at];
+    if (node is! MenuItem || node.onDragged == null) return false;
+
+    final to = _MenuColumn._draggableIndex(level.nodes, at, by);
+    if (to != at) {
+      _moveRow(levelIndex, at, to);
+      node.onDragged!(to - at);
+    }
+    return true;
+  }
+
   /// Pins the row under the keyboard, or lets it go. Answers whether it could.
   ///
   /// **The row is left where it is.** Pinning moves it in the list it came
@@ -1092,6 +1148,11 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
   /// opens, and rebuilding it under the hand would close the column somebody is
   /// standing in. The highlight travels with the row, because the row is what
   /// they were holding.
+  ///
+  /// **And the move is seen happening.** Every row that changed places glides
+  /// there from where it was drawn — see [_Level.moves] — so a row carried from
+  /// the keyboard travels, and one let go by the hand settles from where the
+  /// hand left it.
   void _moveRow(int levelIndex, int from, int to) {
     setState(() {
       final level = _levels[levelIndex];
@@ -1099,11 +1160,40 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
       final node = rows.removeAt(from);
       rows.insert(to, node);
 
-      final fresh = _Level(nodes: rows, title: level.title)..highlighted = to;
+      final fresh = _Level(
+        nodes: rows,
+        title: level.title,
+        moves: level.moves + 1,
+      )..highlighted = to;
       _levels[levelIndex] = fresh;
       if (_levels.length > levelIndex + 1) {
         _levels.removeRange(levelIndex + 1, _levels.length);
       }
+    });
+  }
+
+  /// Says where the row at [from] would land if it were let go now, so the
+  /// rows it would pass can make way while it is still in the hand. [carried]
+  /// is how far it has been carried; null once it has been let go.
+  ///
+  /// Rebuilds only when the landing place changes — once a row, not once a
+  /// pixel.
+  void _carryRow(int levelIndex, int from, double? carried) {
+    if (levelIndex >= _levels.length) return;
+    final level = _levels[levelIndex];
+    final to = carried == null
+        ? null
+        : _MenuColumn._draggableIndex(
+            level.nodes,
+            from,
+            (carried / _MenuSurface.rowPitch).round(),
+          );
+    final carriedFrom = to == null ? null : from;
+    if (level.carriedFrom == carriedFrom && level.carriedTo == to) return;
+    setState(() {
+      level
+        ..carriedFrom = carriedFrom
+        ..carriedTo = to;
     });
   }
 
@@ -1135,7 +1225,7 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
         return;
       }
 
-      final fresh = _Level(nodes: rows, title: level.title)
+      final fresh = _Level(nodes: rows, title: level.title, moves: level.moves)
         ..highlighted = index >= rows.length ? rows.length - 1 : index;
       _levels[levelIndex] = fresh;
       // Anything that was open below this row is about a row that has gone.
@@ -1178,10 +1268,15 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
 
   static int _firstSelectable(_Level level) {
     for (var i = 0; i < level.nodes.length; i++) {
-      if (level.nodes[i] is! MenuSeparator) return i;
+      if (_selectable(level.nodes[i])) return i;
     }
     return -1;
   }
+
+  /// Whether the keyboard can stand on [node]: not a rule, and not a row that
+  /// is hidden at the moment — see [MenuItem.isShown].
+  static bool _selectable(MenuNode node) =>
+      node is! MenuSeparator && (node is! MenuItem || node.shown);
 
   // --- Build --------------------------------------------------------------
 
@@ -1270,6 +1365,8 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
                   onCloseBelow: _scheduleCloseBelow,
                   onRemoveRow: _removeRow,
                   onMoveRow: _moveRow,
+                  onCarryRow: _carryRow,
+                  onPinned: () => setState(() {}),
                   onHighlight: (levelIndex, index) {
                     setState(() {
                       if (_searching) {
@@ -1635,6 +1732,8 @@ class _MenuSurface extends StatelessWidget {
     required this.onHighlight,
     required this.onRemoveRow,
     required this.onMoveRow,
+    required this.onCarryRow,
+    required this.onPinned,
   });
 
   /// The shape to cut the panel to. Null is the ordinary rounded rectangle;
@@ -1666,6 +1765,12 @@ class _MenuSurface extends StatelessWidget {
   /// Moves one row within one column. See [_ContextMenuOverlayState._moveRow].
   final void Function(int levelIndex, int from, int to) onMoveRow;
 
+  /// Where a row still in the hand would land. See
+  /// [_ContextMenuOverlayState._carryRow].
+  final void Function(int levelIndex, int from, double? carried) onCarryRow;
+
+  /// A pin on a row was pressed. See [_MenuColumn.onPinned].
+  final VoidCallback onPinned;
 
   static const double radius = kMenuCornerRadius;
   static const double columnWidth = 232;
@@ -1812,6 +1917,8 @@ class _MenuSurface extends StatelessWidget {
                   onHighlight: (index) => onHighlight(i, index),
                   onRemoveRow: onRemoveRow,
                   onMoveRow: onMoveRow,
+                  onCarryRow: onCarryRow,
+                  onPinned: onPinned,
                 ),
               ),
             ),
@@ -1833,6 +1940,8 @@ class _MenuColumn extends StatelessWidget {
     required this.onHighlight,
     required this.onRemoveRow,
     required this.onMoveRow,
+    required this.onCarryRow,
+    required this.onPinned,
   });
 
   final _Level level;
@@ -1855,12 +1964,37 @@ class _MenuColumn extends StatelessWidget {
   /// Moves one row within one column. See [_ContextMenuOverlayState._moveRow].
   final void Function(int levelIndex, int from, int to) onMoveRow;
 
+  /// Where a row still in the hand would land. See
+  /// [_ContextMenuOverlayState._carryRow].
+  final void Function(int levelIndex, int from, double? carried) onCarryRow;
+
+  /// A pin on one of the rows was pressed. The rule under the pins is worked
+  /// out here, from all of them, so the column has to be drawn again — not only
+  /// the row that was pressed, which left the rule where it was until the
+  /// pointer happened to move.
+  final VoidCallback onPinned;
+
+  /// How far the row at [index] stands aside for the one being carried.
+  ///
+  /// **A pitch towards the place the carried row left**, if the row lies
+  /// between where that one was and where it would land — which opens the gap
+  /// it would drop into, under the hand, before it is dropped. The carried row
+  /// itself follows the hand and is not moved here.
+  double _makingWay(int index) {
+    final from = level.carriedFrom;
+    final to = level.carriedTo;
+    if (from == null || to == null || index == from) return 0;
+    if (from < index && index <= to) return -_MenuSurface.rowPitch;
+    if (to <= index && index < from) return _MenuSurface.rowPitch;
+    return 0;
+  }
+
   /// Where a row carried [rows] places from [from] can actually land.
   ///
   /// **It stops at the first row that cannot be dragged**, which is what keeps
-  /// a pinned folder among the pinned ones without this code knowing what a pin
-  /// is. Dragging past the end lands at the end, because that is what dragging
-  /// past the end means everywhere else.
+  /// a row inside the run it belongs to — the history's folders, and not the
+  /// command under them. Dragging past the end lands at the end, because that
+  /// is what dragging past the end means everywhere else.
   static int _draggableIndex(List<MenuNode> nodes, int from, int rows) {
     final step = rows.isNegative ? -1 : 1;
     var at = from;
@@ -1877,6 +2011,8 @@ class _MenuColumn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rows = <Widget>[];
+    // Whether every pinnable row so far has been pinned — see the rule below.
+    var leading = true;
     for (var i = 0; i < level.nodes.length; i++) {
       final node = level.nodes[i];
       final highlighted = i == level.highlighted;
@@ -1885,11 +2021,43 @@ class _MenuColumn extends StatelessWidget {
         case MenuSeparator(:final label):
           rows.add(_SeparatorRow(label: label, style: style));
         case MenuItem():
+          // A hidden row keeps its place in the list, so every index still
+          // means the row it meant — the highlight and a carried row both
+          // count by index — and is drawn at no height at all.
+          final shown = node.shown;
+          // **A thin rule under the pins**, drawn by the column from the pins
+          // themselves rather than kept as a row of its own: a row in the list
+          // would be one a drag cannot cross, and one left standing where it
+          // was when a pin is added or carried. Only under the pins that lead
+          // the list — a row pinned where it stands stays there until the menu
+          // opens again, and a rule under it would split the list in two.
+          final next = i + 1 < level.nodes.length ? level.nodes[i + 1] : null;
+          final ruled = shown &&
+              leading &&
+              node.pinned &&
+              next is MenuItem &&
+              next.isPinned != null &&
+              !next.pinned;
+          if (shown && node.isPinned != null && !node.pinned) leading = false;
           // A row with places under it unfolds them where the pointer rests,
           // and still goes where it says when it is pressed.
           final unfolds = node.children.isNotEmpty;
-          rows.add(_ItemRow(
+          rows.add(_Revealed(
+            // **Keyed by the row it draws**, where a row can change places: a
+            // row moved is then the same row in a new place, taking its glide,
+            // its hover and its lift along with it, rather than its old place
+            // handing all three to whichever row moved into it.
+            key: node.onDragged == null ? null : ObjectKey(node),
+            shown: shown,
+            child: _RuledRow(
+            ruled: ruled,
+            style: style,
+            child: _ItemRow(
             item: node,
+            onPinned: onPinned,
+            index: i,
+            moves: level.moves,
+            shift: _makingWay(i),
             style: style,
             trailing: node.trailingLabel,
             highlighted: highlighted,
@@ -1916,18 +2084,29 @@ class _MenuColumn extends StatelessWidget {
                     onRemoveRow(levelIndex, i);
                     node.onRemove!();
                   },
+            onCarrying: node.onDragged == null
+                ? null
+                : (carried) => onCarryRow(levelIndex, i, carried),
             // The column moves the row and the item is told how far it
             // actually went — clamped to the run of rows that can be dragged,
-            // so a row cannot be carried out of the group it belongs to.
+            // so a row cannot be carried out of the group it belongs to. The
+            // pitch from one row to the next is the unit, because the rows are
+            // all one height — so where it was dropped *is* how many places it
+            // moved, with no hit-testing to do.
             onDragged: node.onDragged == null
                 ? null
-                : (rows) {
-                    final to = _draggableIndex(level.nodes, i, rows);
+                : (carried) {
+                    final to = _draggableIndex(
+                      level.nodes,
+                      i,
+                      (carried / _MenuSurface.rowPitch).round(),
+                    );
+                    onCarryRow(levelIndex, i, null);
                     if (to == i) return;
                     onMoveRow(levelIndex, i, to);
                     node.onDragged!(to - i);
                   },
-          ));
+          ))));
         case MenuGroup():
           rows.add(_GroupRow(
             group: node,
@@ -2011,6 +2190,123 @@ class _SearchField extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A row that is there only sometimes, opening its place as it comes and
+/// closing it as it goes — see [MenuItem.isShown].
+///
+/// **Always this shape while it has any height**, for the reason [_RuledRow]
+/// is: a row whose tree changed shape would be built afresh. Only once it is
+/// wholly gone is it replaced by nothing at all, so that a hidden row cannot be
+/// found, pointed at or read.
+class _Revealed extends StatefulWidget {
+  const _Revealed({super.key, required this.shown, required this.child});
+
+  final bool shown;
+  final Widget child;
+
+  @override
+  State<_Revealed> createState() => _RevealedState();
+}
+
+class _RevealedState extends State<_Revealed>
+    with SingleTickerProviderStateMixin {
+  // Starts where it is: a row hidden when the menu opens is not seen leaving,
+  // and one shown is not seen arriving — the menu's own unrolling says that.
+  late final AnimationController _open =
+      AnimationController(vsync: this, value: widget.shown ? 1 : 0);
+
+  @override
+  void didUpdateWidget(_Revealed old) {
+    super.didUpdateWidget(old);
+    if (widget.shown == old.shown) return;
+    _open.animateTo(
+      widget.shown ? 1 : 0,
+      duration: motionOf(context, kMenuRowRevealDuration),
+      curve: widget.shown ? kArrivingCurve : kLeavingCurve,
+    );
+  }
+
+  @override
+  void dispose() {
+    _open.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _open,
+        child: widget.child,
+        builder: (context, child) {
+          final open = _open.value;
+          if (open == 0 && !widget.shown) return const SizedBox.shrink();
+          return ClipRect(
+            // Cut only while it is opening or closing: at full height the rule
+            // under a row hangs half a line below it, and a clip would take
+            // that half off.
+            clipBehavior: open < 1 ? Clip.hardEdge : Clip.none,
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: open,
+              child: Opacity(
+                opacity: open,
+                // A row on its way out is not a row to press.
+                child: IgnorePointer(ignoring: !widget.shown, child: child),
+              ),
+            ),
+          );
+        },
+      );
+}
+
+/// A row, and the thin rule under it that closes the pins — see [_MenuColumn].
+///
+/// **Always this shape, drawn or not.** A row whose widget tree changed when
+/// the rule came and went would be built afresh, and the gesture holding a
+/// drag would go with it — the trap the carried row itself once fell into.
+class _RuledRow extends StatelessWidget {
+  const _RuledRow({
+    required this.ruled,
+    required this.style,
+    required this.child,
+  });
+
+  final bool ruled;
+  final MenuAppearance style;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+        fit: StackFit.passthrough,
+        clipBehavior: Clip.none,
+        children: [
+          child,
+          // In the gap between this row and the next, taking no room of its
+          // own: every row keeps one pitch, which is what a drag is measured
+          // in. The separator's own ink, so the two read as one kind of line.
+          //
+          // It fades in and out rather than being drawn or not, and a rule
+          // that moves to close a different row fades out from the one and in
+          // under the other — rule two.
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: -0.3,
+            child: IgnorePointer(
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(end: ruled ? 1 : 0),
+                duration: motionOf(context, kMenuPinRuleDuration),
+                curve: kBothCurve,
+                builder: (context, ink, _) => Container(
+                  key: ruled ? const ValueKey('menu-pin-rule') : null,
+                  height: 0.6,
+                  color: style.foreground.withValues(alpha: 0.18 * ink),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
 }
 
 class _SeparatorRow extends StatelessWidget {
@@ -2114,7 +2410,16 @@ class _ItemRow extends StatefulWidget {
     this.trailing,
     this.onRemove,
     this.onDragged,
+    this.onCarrying,
+    this.onPinned,
+    this.index = 0,
+    this.moves = 0,
+    this.shift = 0,
   });
+
+  /// The pin on this row has been pressed. The rule under the pins is drawn by
+  /// the column from all of them, so the column is told, not only this row.
+  final VoidCallback? onPinned;
 
   final MenuItem item;
   final MenuAppearance style;
@@ -2124,9 +2429,22 @@ class _ItemRow extends StatefulWidget {
   /// the item does not offer it.
   final VoidCallback? onRemove;
 
-  /// Moves this row within its column *and* tells the item. Null where the row
-  /// has no order worth changing — see [MenuItem.onDragged].
-  final void Function(int rows)? onDragged;
+  /// Moves this row within its column *and* tells the item, given how far the
+  /// hand carried it. Null where the row has no order worth changing — see
+  /// [MenuItem.onDragged].
+  final void Function(double carried)? onDragged;
+
+  /// Tells the column how far this row has been carried so far, so the rows it
+  /// would pass can make way; null once it has been let go without moving.
+  final void Function(double? carried)? onCarrying;
+
+  /// Where this row is in its column, and how many moves that column has seen:
+  /// together they say when the row has changed places. See [_Level.moves].
+  final int index;
+  final int moves;
+
+  /// How far this row stands aside for one being carried past it.
+  final double shift;
 
   /// True while this row's own column is showing. Filled solid like a group's,
   /// so the trail through the cascade reads the same whichever kind of row it
@@ -2143,7 +2461,8 @@ class _ItemRow extends StatefulWidget {
   State<_ItemRow> createState() => _ItemRowState();
 }
 
-class _ItemRowState extends State<_ItemRow> {
+class _ItemRowState extends State<_ItemRow>
+    with SingleTickerProviderStateMixin {
   /// Whether the pointer is on this row. The cross is drawn under the pointer
   /// or under the keyboard and nowhere else: a row of crosses is a list that
   /// looks like a form to fill in.
@@ -2159,6 +2478,70 @@ class _ItemRowState extends State<_ItemRow> {
 
   /// Whether this row can be picked up at all — see [MenuItem.onDragged].
   bool get _draggable => widget.onDragged != null;
+
+  /// Where the row is drawn, from its place in the column, while the hand is
+  /// not holding it: stepping aside for a row being carried past, or gliding
+  /// into a new place from the one it was drawn in.
+  late final AnimationController _glide =
+      AnimationController.unbounded(vsync: this);
+
+  /// From the moment the hand lets go until the row has settled. It is still
+  /// the row on top of the pile until it is in its place.
+  bool _landing = false;
+
+  @override
+  void didUpdateWidget(_ItemRow old) {
+    super.didUpdateWidget(old);
+    final moved = widget.moves != old.moves && widget.index != old.index;
+    if (!moved && widget.shift == old.shift) return;
+    // A row in a new place starts from where it was drawn, so the move is seen
+    // happening: the places it changed by, taken back, then let go.
+    if (moved) {
+      _glide.value += (old.index - widget.index) * _MenuSurface.rowPitch;
+    }
+    _glideTo(widget.shift);
+  }
+
+  @override
+  void dispose() {
+    _glide.dispose();
+    super.dispose();
+  }
+
+  void _glideTo(double target) {
+    _glide
+        .animateTo(
+          target,
+          duration: motionOf(context, kMenuRowGlideDuration),
+          curve: kBothCurve,
+        )
+        .whenCompleteOrCancel(() {
+          if (mounted && _landing && !_glide.isAnimating) {
+            setState(() => _landing = false);
+          }
+        });
+  }
+
+  /// The hand has let go — or had the gesture taken from it, when [move] is
+  /// false and the row goes back where it was.
+  ///
+  /// **Drawn where the hand left it, and settling from there**: into the new
+  /// place when the column moves the row, back into its own when it does not.
+  /// Snapping into place under a hand that has only just opened is a jump.
+  void _letGo({required bool move}) {
+    final carried = _carried ?? 0;
+    _glide.value = carried;
+    setState(() {
+      _carried = null;
+      _landing = true;
+    });
+    _glideTo(widget.shift);
+    if (move) {
+      widget.onDragged!(carried);
+    } else {
+      widget.onCarrying?.call(null);
+    }
+  }
 
   MenuItem get item => widget.item;
   MenuAppearance get style => widget.style;
@@ -2205,25 +2588,24 @@ class _ItemRowState extends State<_ItemRow> {
         // Nothing moves until the pointer has travelled the slop, so a press
         // that goes where it says still goes where it says — and a press that
         // travels is a row being carried instead.
-        onVerticalDragStart:
-            _draggable ? (_) => setState(() => _carried = 0) : null,
-        onVerticalDragUpdate: _draggable
-            ? (details) =>
-                setState(() => _carried = (_carried ?? 0) + details.delta.dy)
-            : null,
-        onVerticalDragEnd: _draggable
+        onVerticalDragStart: _draggable
             ? (_) {
-                final carried = _carried ?? 0;
-                setState(() => _carried = null);
-                // The pitch from one row to the next is the unit, because the
-                // rows are all one height — so where it was dropped *is* how
-                // many places it moved, with no hit-testing to do.
-                final rows = (carried / _MenuSurface.rowPitch).round();
-                if (rows != 0) widget.onDragged!(rows);
+                // Picked up from wherever it was gliding, not from its place:
+                // a row caught mid-glide stays under the hand that caught it.
+                _glide.stop();
+                setState(() => _carried = _glide.value);
+                widget.onCarrying?.call(_carried);
               }
             : null,
+        onVerticalDragUpdate: _draggable
+            ? (details) {
+                setState(() => _carried = (_carried ?? 0) + details.delta.dy);
+                widget.onCarrying?.call(_carried);
+              }
+            : null,
+        onVerticalDragEnd: _draggable ? (_) => _letGo(move: true) : null,
         onVerticalDragCancel:
-            _draggable ? () => setState(() => _carried = null) : null,
+            _draggable ? () => _letGo(move: false) : null,
         child: Container(
           height: _MenuSurface.rowHeight,
           margin: _MenuSurface.rowMargin,
@@ -2318,6 +2700,7 @@ class _ItemRowState extends State<_ItemRow> {
                   // until the menu is opened again.
                   onPressed: () {
                     item.onPin!();
+                    widget.onPinned?.call();
                     if (mounted) setState(() {});
                   },
                 ),
@@ -2350,19 +2733,23 @@ class _ItemRowState extends State<_ItemRow> {
     // the shape of the tree, so Flutter threw the element away and made a new
     // one — taking the recogniser holding the drag with it. The drag began and
     // then simply stopped, mid-gesture, every time.
-    final carried = _carried ?? 0;
-    return Transform.translate(
-      offset: Offset(0, carried),
-      child: DecoratedBox(
-        // Carried above its neighbours, so the row the hand is holding reads as
-        // the one on top of the pile rather than one sliding behind the others.
-        decoration: BoxDecoration(
-          borderRadius: _MenuSurface.pill,
-          boxShadow: _carried == null
-              ? const []
-              : const [BoxShadow(color: Color(0x40000000), blurRadius: 8)],
+    return AnimatedBuilder(
+      animation: _glide,
+      child: row,
+      builder: (context, row) => Transform.translate(
+        offset: Offset(0, _carried ?? _glide.value),
+        child: DecoratedBox(
+          // Carried above its neighbours, so the row the hand is holding reads
+          // as the one on top of the pile rather than one sliding behind the
+          // others — and until it has settled, not only until it is let go.
+          decoration: BoxDecoration(
+            borderRadius: _MenuSurface.pill,
+            boxShadow: _carried == null && !_landing
+                ? const []
+                : const [BoxShadow(color: Color(0x40000000), blurRadius: 8)],
+          ),
+          child: row,
         ),
-        child: row,
       ),
     );
   }
@@ -2497,6 +2884,7 @@ List<_Match> _searchNodes(List<MenuNode> nodes, String query, [String path = '']
           _searchNodes(children, query, path.isEmpty ? label : '$path › $label'),
         );
       case MenuItem():
+        if (!node.shown) continue;
         int? best;
         for (final haystack in [node.label, ...node.keywords]) {
           final score = _score(haystack, query);

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,12 +8,20 @@ import '../../core/plugins/plugin_manifest.dart';
 import '../../core/settings/appearance_settings.dart';
 import '../../core/settings/settings_store.dart';
 import '../../core/version.dart';
+import '../motion.dart';
 import '../text_scale.dart';
 import 'update_check_row.dart';
 
 /// Key bindings and project information.
-class AboutTab extends StatelessWidget {
+class AboutTab extends StatefulWidget {
   const AboutTab({super.key});
+
+  /// Set by `SettingsPage.open` for Help → Key bindings: the tab brings its
+  /// table of keys up to the top once it is built, and forgets the request.
+  ///
+  /// Outside the tree for the reason [SettingsView.lastTab] is — the page is
+  /// pushed and the tab built afterwards, with nothing in between to carry it.
+  static bool revealKeyBindings = false;
 
   /// The two rows that depend on which key opens quick search — see
   /// [QuickSearchOpener]. They are worth building rather than writing down
@@ -67,6 +77,7 @@ class AboutTab extends StatelessWidget {
     ('F8 / Delete', 'Delete to the recycle bin'),
     ('Shift+Delete', 'Delete permanently'),
     ('F9', 'Settings'),
+    ('F12', 'The folder history of the active panel'),
     ('Ctrl+F3', 'Sort by name (again to reverse)'),
     ('Ctrl+F4', 'Sort by extension'),
     ('Ctrl+F5', 'Sort by date'),
@@ -95,6 +106,35 @@ class AboutTab extends StatelessWidget {
     ),
     ('Hold right-click', "The same, from the pointer"),
   ];
+
+  @override
+  State<AboutTab> createState() => _AboutTabState();
+}
+
+class _AboutTabState extends State<AboutTab> {
+  /// The heading over the table of keys, which Help → Key bindings scrolls to.
+  final GlobalKey _keysHeading = GlobalKey(debugLabel: 'key bindings');
+
+  @override
+  void initState() {
+    super.initState();
+    if (!AboutTab.revealKeyBindings) return;
+    AboutTab.revealKeyBindings = false;
+    // After the first frame, when there is a table to scroll to. Brought up
+    // rather than jumped to, so the page is seen to be the About it opened on
+    // and not a page of keys with no top.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final heading = _keysHeading.currentContext;
+      if (!mounted || heading == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          heading,
+          duration: motionOf(context, kSettingsFoldDuration),
+          curve: kArrivingCurve,
+        ),
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -139,6 +179,7 @@ class AboutTab extends StatelessWidget {
         const Divider(height: 32),
         Text(
           tr('KEY BINDINGS'),
+          key: _keysHeading,
           style: Theme.of(context)
               .textTheme
               .labelSmall
@@ -148,7 +189,7 @@ class AboutTab extends StatelessWidget {
               ),
         ),
         const SizedBox(height: 8),
-        for (final (keys, description) in _bindings(
+        for (final (keys, description) in AboutTab._bindings(
           context.watch<SettingsStore>().appearance.quickSearchOpener,
         ))
           Padding(

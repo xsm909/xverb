@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../i18n/plugin_strings.dart';
+import '../sheet/plugin_sheet_source.dart';
+import '../sheet/sheet_source.dart';
 import '../vfs/file_entry.dart';
 import '../vfs/vfs_path.dart';
 import 'facts.dart';
@@ -48,6 +50,12 @@ enum ViewerContentKind {
 
   /// A file, drawn by whichever viewer claims it. See [ViewerContent.url].
   file,
+
+  /// Rows and columns of cells, read a screen at a time from a
+  /// [SheetSource] — see [ViewerContent.sheet]. Not a [table]: in a table a
+  /// row is a thing (a commit, a file) and the cursor is on a row; in a sheet
+  /// the unit is a cell, and what is selected is ranges of them.
+  sheet,
   error,
 }
 
@@ -146,8 +154,11 @@ class MeshGeometry {
   /// Whether this mesh has both a picture and somewhere on it to read from.
   bool get isPainted => image >= 0 && (uvs?.length ?? 0) >= vertexCount * 2;
 
+  /// Never true of a mesh with no vertices: a skeleton sent on its own has
+  /// joints and no weights, and there is nothing in it for them to pull on.
   bool get isSkinned =>
       joints > 0 &&
+      vertexCount > 0 &&
       (jointIndices?.length ?? 0) >= vertexCount * 4 &&
       (jointWeights?.length ?? 0) >= vertexCount * 4;
 
@@ -651,12 +662,14 @@ class ContentPart {
     this.tab,
   });
 
-  factory ContentPart.fromJson(Map<String, dynamic> json) {
+  factory ContentPart.fromJson(Map<String, dynamic> json, {SheetCall? call}) {
     final content = json['content'];
     return ContentPart(
       id: json['id']?.toString() ?? '',
+      // A sheet in one of several parts asks for its rows the same way a
+      // sheet on its own does.
       content: content is Map
-          ? ViewerContent.fromJson(Map<String, dynamic>.from(content))
+          ? ViewerContent.fromJson(Map<String, dynamic>.from(content), call: call)
           : null,
       weight: (json['weight'] as num?)?.toDouble() ?? 1,
       title: json['title'] as String?,
@@ -1141,9 +1154,13 @@ class ViewerContent {
     this.message,
     this.truncated = false,
     this.cursor = -1,
+    this.sheet,
   });
 
-  factory ViewerContent.fromJson(Map<String, dynamic> json) {
+  /// [call] is how a sheet asks its plugin for more rows. Content that does
+  /// not come from a plugin that can be asked — a nested part, a test — leaves
+  /// it out, and a sheet then has the rows it was sent and no more.
+  factory ViewerContent.fromJson(Map<String, dynamic> json, {SheetCall? call}) {
     final kind = switch (json['kind'] as String?) {
       'markdown' => ViewerContentKind.markdown,
       'image' => ViewerContentKind.image,
@@ -1156,9 +1173,13 @@ class ViewerContent {
       'audio' => ViewerContentKind.audio,
       'split' => ViewerContentKind.split,
       'file' => ViewerContentKind.file,
+      'sheet' => ViewerContentKind.sheet,
       'error' => ViewerContentKind.error,
       _ => ViewerContentKind.text,
     };
+    if (kind == ViewerContentKind.sheet) {
+      return ViewerContent(kind: kind, sheet: PluginSheetSource(json, call));
+    }
 
     return ViewerContent(
       kind: kind,
@@ -1207,7 +1228,8 @@ class ViewerContent {
       ],
       parts: [
         for (final part in (json['parts'] as List?) ?? const [])
-          if (part is Map) ContentPart.fromJson(Map<String, dynamic>.from(part)),
+          if (part is Map)
+            ContentPart.fromJson(Map<String, dynamic>.from(part), call: call),
       ],
       // The graph reads the same object it arrived in: `nodes`, `links` and
       // the rest are top-level keys, not a nested document.
@@ -1317,6 +1339,10 @@ class ViewerContent {
 
   /// True when the plugin returned only part of the file.
   final bool truncated;
+
+  /// Where a [ViewerContentKind.sheet] gets its rows. A source, not the rows:
+  /// a sheet is read a screen at a time, and the content is only the door.
+  final SheetSource? sheet;
 
   /// Which row a table's cursor should be on, or -1 to leave it alone.
   ///

@@ -1,9 +1,14 @@
 # Language
 
-The application ships in **English, Russian, Spanish, German, French, Korean
-and Japanese**, and English is the fallback whenever anything is missing.
-Settings → Appearance → Language switches it; **System** follows the machine and
-falls back to English when the machine's language is not one of the seven.
+The application ships in **English, Russian, Ukrainian, Spanish, German, French,
+Italian, Norwegian (Bokmål), Finnish, Korean, Japanese and Simplified Chinese**,
+and English is the fallback whenever anything is missing. Settings → Appearance
+→ Language switches it; **System** follows the machine and falls back to English
+when the machine's language is not one of the twelve. Chinese is matched by script or
+region rather than by its first two letters: `zh_CN` and `zh-Hans` get
+Simplified, while `zh_TW`, `zh_HK` and `zh-Hant` get English until Traditional
+ships as a catalogue of its own. Norwegian set as `no` or as Nynorsk (`nn`)
+gets Bokmål, which is far nearer than English.
 
 A language is **not a plugin**. It travels in the app bundle, so the interface
 is readable on a machine with nothing installed — including the first launch and
@@ -86,8 +91,10 @@ cheapest moment to write a translation is the moment the English is written.
    is what puts a fallback stack of system faces under the theme; without it
    Japanese comes out as rows of boxes. **The stack has to name a face for that
    script**: the Japanese families a system ships carry no Hangul and the Korean
-   ones no kana, so `_wideCoverageFonts` in `lib/app.dart` lists both, and a
-   third script would need its own entries there.
+   ones no kana, so `_wideCoverageFonts` in `lib/app.dart` lists both. Chinese
+   has its faces in `_chineseFaces`, put **ahead** of the others when it is
+   the language: the Japanese and Korean faces carry Han characters too, in
+   their own shapes, and the fallback takes the first face with the glyph.
 
 Nothing else. The list in Settings is built from `shipped`, and the catalogue is
 read at startup and again whenever the language changes.

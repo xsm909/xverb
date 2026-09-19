@@ -76,8 +76,15 @@ enum ZoomMode {
   /// One unit of the file on one pixel of the screen. Unmoved by a resize.
   actual;
 
-  static ZoomMode byName(String? name) =>
-      ZoomMode.values.firstWhere((m) => m.name == name, orElse: () => fill);
+  /// The mode a stored name stands for, or null for a name nothing here knows
+  /// — no answer at all, so that each kind of thing opens in its own default
+  /// rather than in one picked for all of them.
+  static ZoomMode? byName(String? name) {
+    for (final mode in ZoomMode.values) {
+      if (mode.name == name) return mode;
+    }
+    return null;
+  }
 }
 
 /// The mode a thing opens in, and where to write down a change to it.
@@ -93,8 +100,10 @@ class ViewerZoomMode extends InheritedWidget {
     required super.child,
   });
 
-  /// What a thing opens in.
-  final ZoomMode mode;
+  /// What the reader last pressed, and so what everything opens in. Null until
+  /// one of the three has been pressed: each canvas then opens in its own
+  /// default — a picture one pixel to one pixel, see [ZoomCanvas.opensIn].
+  final ZoomMode? mode;
 
   /// Told when the reader presses one of the three, so that the next file and
   /// the next session open the same way. **Not** told about a zoom by hand:
@@ -130,7 +139,13 @@ class ZoomCanvas extends StatefulWidget {
     required this.caption,
     this.hasKeyboard = true,
     this.detail,
+    this.opensIn,
   });
+
+  /// What this kind of thing opens in while the reader has pressed none of the
+  /// three. Null keeps the canvas's own answer — filling the window on a
+  /// viewer page and fitted anywhere else — which is what a drawing does.
+  final ZoomMode? opensIn;
 
   /// The natural size of what is being looked at, in its own units — a
   /// picture's pixels, a drawing's `viewBox`.
@@ -573,7 +588,10 @@ class _ZoomCanvasState extends State<ZoomCanvas>
     final folder = FolderWalk.of(context);
     _arrowsTaken = folder?.taken ?? false;
     _walk = folder?.onWalk;
-    _opensIn = ViewerZoomMode.of(context)?.mode ?? ZoomMode.fit;
+    final page = ViewerZoomMode.of(context);
+    _opensIn = page?.mode ??
+        widget.opensIn ??
+        (page != null ? ZoomMode.fill : ZoomMode.fit);
     // The first build is the arrival: whatever the page says pictures open in
     // is what this one opens in. `_mode` is only null again once the reader
     // has zoomed by hand.
@@ -631,12 +649,11 @@ class _ZoomCanvasState extends State<ZoomCanvas>
             ),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              // Fitted and 1:1 are the two magnifications anybody wants, so the
-              // press that means "the other one" swaps between them.
-              // Between the way pictures open here and one pixel to one
-              // pixel, which are the two things anybody double-presses for.
+              // Between the way things open here and one pixel to one pixel,
+              // which are the two anybody double-presses for. A picture opens
+              // at 1:1, so for a picture the other one is the whole of it.
               onDoubleTap: () => _mode == ZoomMode.actual
-                  ? _put(_opensIn == ZoomMode.actual ? ZoomMode.fill : _opensIn)
+                  ? _put(_opensIn == ZoomMode.actual ? ZoomMode.fit : _opensIn)
                   : _put(ZoomMode.actual),
               onPanUpdate: (details) => _drag(details.delta),
               child: AnimatedBuilder(
@@ -754,8 +771,10 @@ class _ZoomCanvasState extends State<ZoomCanvas>
             on: _mode == ZoomMode.fill,
             onPressed: () => _put(ZoomMode.fill),
           ),
+          // Written rather than drawn: the icon for "actual size" is one
+          // nobody recognises, and 1:1 is what everybody calls it.
           ViewportSwitch(
-            icon: Icons.photo_size_select_actual_outlined,
+            label: '1:1',
             message: '${tr('One pixel to one pixel')}  1',
             on: _mode == ZoomMode.actual ||
                 (_mode == null && (_liveZoom - 1).abs() < 0.001),

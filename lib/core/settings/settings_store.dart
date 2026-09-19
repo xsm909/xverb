@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../i18n/i18n.dart';
 import '../i18n/plugin_strings.dart';
 import '../update/update_offer.dart';
+import '../vfs/vfs_path.dart';
 import 'appearance_settings.dart';
 
 /// Which column the panels sort by.
@@ -46,7 +47,10 @@ class SettingsStore extends ChangeNotifier {
   static const _kFilmStrip = 'viewer.filmStrip.open';
   static const _kFilmStripRows = 'viewer.filmStrip.rows';
   static const _kFilmStripFold = 'viewer.filmStrip.fold';
-  static const _kZoomMode = 'viewer.zoom.mode';
+  // A new key, not `viewer.zoom.mode`: under the old one a choice made while
+  // photographs opened filling the window would go on hiding the 1:1 they
+  // open at now. Everybody starts again from the new default, once.
+  static const _kZoomMode = 'viewer.zoom.opens';
   static const _kSoundVolume = 'viewer.sound.volume';
   static const _kSoundSpectrum = 'viewer.sound.spectrum';
   static const _kUpdateStaying = 'update.staying';
@@ -78,7 +82,41 @@ class SettingsStore extends ChangeNotifier {
     // application in English and then swap it, which reads as a bug even when
     // it lasts a single frame.
     await store._applyLanguage();
+    await store._scrubPasswords();
     return store;
+  }
+
+  /// **No password on disk** (backlog 142). Where the panels were left and
+  /// where each volume was left used to be written as a connection's whole
+  /// URL, password and all. Read back and written again without it; the
+  /// password comes from the saved connection when the place is opened — see
+  /// `ConnectionStore.withSecret`.
+  Future<void> _scrubPasswords() async {
+    for (final key in [_kLeftPath, _kRightPath]) {
+      final saved = _prefs.getString(key);
+      if (saved == null) continue;
+      final bare = _withoutPassword(saved);
+      if (bare != saved) await _prefs.setString(key, bare);
+    }
+    final volumes = volumePaths;
+    final bare = {
+      for (final entry in volumes.entries)
+        _withoutPassword(entry.key): _withoutPassword(entry.value),
+    };
+    if (!mapEquals(volumes, bare)) {
+      await _prefs.setString(_kVolumePaths, jsonEncode(bare));
+    }
+  }
+
+  static String _withoutPassword(String uri) {
+    try {
+      final path = VfsPath.parse(uri);
+      final bare = path.withoutPassword;
+      // Left exactly as written unless there was something to take out.
+      return identical(bare, path) ? uri : bare.toString();
+    } on Object {
+      return uri;
+    }
   }
 
   /// What the user picked, which may be [LanguageOption.system].
@@ -395,9 +433,9 @@ class SettingsStore extends ChangeNotifier {
   ///
   /// **A name, not the enum**, because the enum belongs to the canvas and the
   /// settings have no business importing the interface. Read back through
-  /// `ZoomMode.byName`, which answers with the default for anything it does
-  /// not know — so a value written by a build that offered a fourth mode does
-  /// not leave the viewer opening in nothing.
+  /// `ZoomMode.byName`, which answers null for anything it does not know — so
+  /// a value written by a build that offered a fourth mode leaves each canvas
+  /// on its own default rather than opening in nothing.
   ///
   /// One for every viewer, remembered, and for the reason the strip's is:
   /// somebody who looks at photographs filling the window looks at *every*

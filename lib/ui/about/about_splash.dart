@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/colour_contrast.dart';
 import '../../core/i18n/i18n.dart';
 import '../../core/links.dart';
+import '../../core/plugins/first_run_setup.dart';
+import '../../core/plugins/plugin_registry.dart';
 import '../../core/settings/appearance_settings.dart';
 import '../../core/settings/settings_store.dart';
 import '../../core/vfs/shell_open.dart';
@@ -40,6 +43,15 @@ const Size kAboutSplashSize = Size(620, 250);
 /// The corner the whole card is cut to, and the picture with it.
 const double kAboutSplashRadius = 12;
 
+/// How far through its arrival the card is whole, and its shadow begins.
+///
+/// **One after the other, never together.** The card is translucent, and a
+/// shadow fading in under a card that is itself still half there showed
+/// through it as a grey smear — dirt on the desk rather than something laid on
+/// it. So the card comes first, the shadow once it is solid, and going is the
+/// same in reverse.
+const double kAboutCardShown = 0.6;
+
 /// Whether the card is still owed to this run of the application.
 ///
 /// **Set by `main`, and by nothing else.** Blender shows its splash when it
@@ -65,22 +77,36 @@ bool takeStartupSplash() {
 
 /// Puts the About card up. Returns when it has gone.
 Future<void> showAboutSplash(BuildContext context) {
+  final appearance = context.read<SettingsStore>().appearance;
+  final state = context.read<AppState?>();
   return Navigator.of(context, rootNavigator: true).push(
-    _AboutRoute(
-      appearance: context.read<SettingsStore>().appearance,
-      state: context.read<AppState?>(),
+    AboutCardRoute(
+      appearance: appearance,
+      builder: (context) => _AboutCard(appearance: appearance, state: state),
     ),
   );
 }
 
+/// A card laid over the application: this one, and a plugin's.
+///
 /// A route rather than a dialog, for the two things a dialog would not give:
 /// a barrier that takes the press without dimming the application to grey, and
 /// a card that can be dismissed by that press without a button to press.
-class _AboutRoute extends PopupRoute<void> {
-  _AboutRoute({required this.appearance, required this.state});
+class AboutCardRoute extends PopupRoute<void> {
+  AboutCardRoute({
+    required this.appearance,
+    required this.builder,
+    this.grows = true,
+  });
 
   final AppearanceSettings appearance;
-  final AppState? state;
+  final WidgetBuilder builder;
+
+  /// Whether it comes up out of a slightly smaller card as it fades in, or
+  /// only fades. The application's card grows; a plugin's only fades — it is
+  /// asked for from a page, often, and a card that is merely there and then
+  /// not is the quieter answer to a question about a version.
+  final bool grows;
 
   /// **Nothing behind it is dimmed**, which is the one place that is right.
   ///
@@ -112,19 +138,27 @@ class _AboutRoute extends PopupRoute<void> {
   Widget buildPage(
     BuildContext context,
     Animation<double> animation,
-    Animation<double> secondary,
-  ) => _AboutCard(appearance: appearance, state: state);
+    Animation<double> secondaryAnimation,
+  ) => builder(context);
 
   @override
   Widget buildTransitions(
     BuildContext context,
     Animation<double> animation,
-    Animation<double> secondary,
+    Animation<double> secondaryAnimation,
     Widget child,
   ) {
     // It comes up rather than out of a corner: a card laid on the desk, the
     // same arrival an internal window uses at its plainest.
-    final eased = CurvedAnimation(parent: animation, curve: kArrivingCurve);
+    //
+    // **The card first, and its shadow after it** — see [kAboutCardShown].
+    // Going, the same animation runs backwards, so the shadow leaves first
+    // and the card after it without saying so twice.
+    final eased = CurvedAnimation(
+      parent: animation,
+      curve: const Interval(0, kAboutCardShown, curve: kArrivingCurve),
+    );
+    if (!grows) return FadeTransition(opacity: eased, child: child);
     return FadeTransition(
       opacity: eased,
       child: ScaleTransition(
@@ -140,6 +174,37 @@ class _AboutCard extends StatelessWidget {
 
   final AppearanceSettings appearance;
   final AppState? state;
+
+  @override
+  Widget build(BuildContext context) => AboutCardFrame(
+    appearance: appearance,
+    builder: (menu) => Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Banner(appearance: appearance),
+        _Body(appearance: appearance, menu: menu, state: state),
+      ],
+    ),
+  );
+}
+
+/// The card itself, whatever is on it: its width, its corners, its shadow, the
+/// blur behind it, and Escape.
+///
+/// Shared so that the application's card and a plugin's are one shape — a
+/// plugin's is the same question asked about something smaller.
+class AboutCardFrame extends StatelessWidget {
+  const AboutCardFrame({
+    super.key,
+    required this.appearance,
+    required this.builder,
+  });
+
+  final AppearanceSettings appearance;
+
+  /// What is on the card, given the colours it is drawn in.
+  final Widget Function(MenuAppearance menu) builder;
 
   @override
   Widget build(BuildContext context) {
@@ -165,17 +230,8 @@ class _AboutCard extends StatelessWidget {
               width: kAboutSplashSize.width,
               child: Material(
                 type: MaterialType.transparency,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(kAboutSplashRadius),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x59000000),
-                        blurRadius: 28,
-                        offset: Offset(0, 10),
-                      ),
-                    ],
-                  ),
+                child: _Shadow(
+                  animation: ModalRoute.of(context)?.animation,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(kAboutSplashRadius),
                     child: blurredBackdrop(
@@ -183,18 +239,7 @@ class _AboutCard extends StatelessWidget {
                       passes: menu.blurPasses,
                       child: Container(
                         color: menu.background.withValues(alpha: menu.opacity),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _Banner(appearance: appearance),
-                            _Body(
-                              appearance: appearance,
-                              menu: menu,
-                              state: state,
-                            ),
-                          ],
-                        ),
+                        child: builder(menu),
                       ),
                     ),
                   ),
@@ -206,6 +251,47 @@ class _AboutCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The card's shadow, which arrives after the card and leaves before it.
+///
+/// Its own widget so that only the shadow is rebuilt as it fades; the card
+/// under it is built once. Without a route to follow — a test drawing the
+/// frame on its own — it is simply there.
+class _Shadow extends StatelessWidget {
+  const _Shadow({required this.animation, required this.child});
+
+  final Animation<double>? animation;
+  final Widget child;
+
+  static const _interval = Interval(kAboutCardShown, 1, curve: kArrivingCurve);
+
+  @override
+  Widget build(BuildContext context) {
+    final running = animation;
+    if (running == null) return _drawn(1, child);
+    return AnimatedBuilder(
+      animation: running,
+      builder: (context, card) =>
+          _drawn(_interval.transform(running.value), card!),
+      child: child,
+    );
+  }
+
+  Widget _drawn(double strength, Widget card) => DecoratedBox(
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(kAboutSplashRadius),
+      boxShadow: [
+        if (strength > 0)
+          BoxShadow(
+            color: const Color(0x59000000).withValues(alpha: 0.35 * strength),
+            blurRadius: 28,
+            offset: const Offset(0, 10),
+          ),
+      ],
+    ),
+    child: card,
+  );
 }
 
 /// The picture, with the version written over its quiet corner.
@@ -442,20 +528,20 @@ class _Body extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: _Column(
+                  child: AboutColumn(
                     title: tr('History'),
                     appearance: appearance,
                     menu: menu,
                     children: [
                       if (folders.isEmpty)
-                        _Quiet(
+                        AboutQuiet(
                           text: tr('Nowhere yet'),
                           appearance: appearance,
                           menu: menu,
                         )
                       else
                         for (final where in folders.take(8))
-                          _Row(
+                          AboutRow(
                             label: where.label,
                             hint: where.display,
                             icon: Icons.folder_outlined,
@@ -474,7 +560,7 @@ class _Body extends StatelessWidget {
                 const SizedBox(width: 14),
                 SizedBox(
                   width: 210,
-                  child: _Column(
+                  child: AboutColumn(
                     title: tr('Xverb'),
                     appearance: appearance,
                     menu: menu,
@@ -482,28 +568,28 @@ class _Body extends StatelessWidget {
                       // The front door, and first because that is what it is:
                       // the rows under it are places somebody goes for one
                       // particular thing.
-                      _Row(
+                      AboutRow(
                         label: tr('Website'),
                         icon: Icons.language_outlined,
                         appearance: appearance,
                         menu: menu,
                         onPressed: () => _open(context, kWebsiteUrl),
                       ),
-                      _Row(
+                      AboutRow(
                         label: tr("What's new"),
                         icon: Icons.auto_awesome_outlined,
                         appearance: appearance,
                         menu: menu,
                         onPressed: () => _open(context, kReleasesUrl),
                       ),
-                      _Row(
+                      AboutRow(
                         label: tr('Source and licence'),
                         icon: Icons.code_outlined,
                         appearance: appearance,
                         menu: menu,
                         onPressed: () => _open(context, kProjectUrl),
                       ),
-                      _Row(
+                      AboutRow(
                         label: tr('Report a problem'),
                         icon: Icons.bug_report_outlined,
                         appearance: appearance,
@@ -516,6 +602,14 @@ class _Body extends StatelessWidget {
               ],
             ),
           ),
+          // The first run's offer, where there is no Python yet. Nothing at all
+          // where there is, so the card is what it has always been.
+          if (state != null)
+            _FirstRunOffer(
+              plugins: state!.plugins,
+              appearance: appearance,
+              menu: menu,
+            ),
           const SizedBox(height: 10),
           Divider(height: 1, color: menu.foreground.withValues(alpha: 0.14)),
           const SizedBox(height: 8),
@@ -545,8 +639,129 @@ class _Body extends StatelessWidget {
   }
 }
 
-class _Column extends StatelessWidget {
-  const _Column({
+/// Python and the everyday plugins, offered under the two columns while there
+/// is no Python — see [FirstRunSetup]. Its own words are the confirmation: a
+/// second dialog raised over a card that is itself laid over the application
+/// would open behind it.
+///
+/// It opens and closes its place rather than appearing in it, and the strip
+/// says, in the same place, how the work is going and how it ended.
+class _FirstRunOffer extends StatelessWidget {
+  const _FirstRunOffer({
+    required this.plugins,
+    required this.appearance,
+    required this.menu,
+  });
+
+  final PluginRegistry plugins;
+  final AppearanceSettings appearance;
+  final MenuAppearance menu;
+
+  @override
+  Widget build(BuildContext context) {
+    final setup = FirstRunSetup.instance;
+    return ListenableBuilder(
+      listenable: Listenable.merge([plugins, setup]),
+      builder: (context, _) => AnimatedSize(
+        duration: motionOf(context, kSettingsFoldDuration),
+        curve: kBothCurve,
+        alignment: Alignment.topCenter,
+        child: setup.shownWith(plugins)
+            ? _strip(setup)
+            : const SizedBox(width: double.infinity),
+      ),
+    );
+  }
+
+  Widget _strip(FirstRunSetup setup) {
+    final ink = menu.foreground;
+    final accent = appearance.accentColor;
+    final progress = setup.progress;
+    final failure = setup.failure;
+    final installed = setup.installed;
+    final message = progress != null
+        ? progress.message
+        : failure ??
+            (installed != null
+                ? tr('Python and {count} plugin(s) are installed.',
+                    {'count': installed})
+                : tr(
+                    'Plugins need Python, and it is not here yet. Install it '
+                    'with the everyday plugins: archives, PDF, pictures, '
+                    'vector graphics and the disk map. Nothing is installed '
+                    'system-wide.',
+                  ));
+    final offering = progress == null && installed == null;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: accent.withValues(alpha: 0.45)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.extension_outlined, size: 18, color: accent),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    message,
+                    style: TextStyle(
+                      fontSize: appearance.scaled(12),
+                      color: ink,
+                    ),
+                  ),
+                ),
+                if (offering) ...[
+                  const SizedBox(width: 10),
+                  TextButton(
+                    onPressed: setup.notNow,
+                    style: TextButton.styleFrom(
+                      foregroundColor: ink.withValues(alpha: 0.8),
+                    ),
+                    child: Text(tr('Not now')),
+                  ),
+                  const SizedBox(width: 4),
+                  FilledButton(
+                    onPressed: () => unawaited(setup.install(plugins)),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: inkFor(accent),
+                    ),
+                    child: Text(failure != null ? tr('Try again') : tr('Install')),
+                  ),
+                ],
+              ],
+            ),
+            if (progress != null) ...[
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  value: progress.fraction,
+                  minHeight: 3,
+                  color: accent,
+                  backgroundColor: accent.withValues(alpha: 0.18),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AboutColumn extends StatelessWidget {
+  const AboutColumn({
+    super.key,
     required this.title,
     required this.children,
     required this.appearance,
@@ -581,8 +796,9 @@ class _Column extends StatelessWidget {
 }
 
 /// One pressable line, shaped like a menu row because that is what it is.
-class _Row extends StatefulWidget {
-  const _Row({
+class AboutRow extends StatefulWidget {
+  const AboutRow({
+    super.key,
     required this.label,
     required this.icon,
     required this.appearance,
@@ -605,7 +821,7 @@ class _Row extends StatefulWidget {
   final VoidCallback onPressed;
 
   @override
-  State<_Row> createState() => _RowState();
+  State<AboutRow> createState() => _AboutRowState();
 }
 
 /// **There was an accent variant, and it is worth knowing why.**
@@ -616,7 +832,7 @@ class _Row extends StatefulWidget {
 /// whole of it. It went with the donate link on 2026-09-07 (see
 /// `lib/core/links.dart`), and returning it is three ternaries: the ink, the
 /// hover alpha, and the weight.
-class _RowState extends State<_Row> {
+class _AboutRowState extends State<AboutRow> {
   bool _over = false;
 
   @override
@@ -667,8 +883,9 @@ class _RowState extends State<_Row> {
 }
 
 /// A column with nothing in it, saying so.
-class _Quiet extends StatelessWidget {
-  const _Quiet({
+class AboutQuiet extends StatelessWidget {
+  const AboutQuiet({
+    super.key,
     required this.text,
     required this.appearance,
     required this.menu,

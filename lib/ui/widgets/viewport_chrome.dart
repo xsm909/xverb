@@ -40,13 +40,17 @@ class ViewportChrome extends StatelessWidget {
 class ViewportSwitch extends StatelessWidget {
   const ViewportSwitch({
     super.key,
-    required this.icon,
+    this.icon,
+    this.label,
     required this.message,
     required this.onPressed,
     this.on = false,
-  });
+  }) : assert((icon == null) != (label == null), 'an icon or a label');
 
-  final IconData icon;
+  /// What it shows: an icon, or — where the thing already has a name everybody
+  /// uses, like 1:1 — that name, in the icon's place and colour.
+  final IconData? icon;
+  final String? label;
 
   /// What it is, and the key that does the same thing — every one of these has
   /// a letter, because a switch only the mouse can reach is not a control.
@@ -58,6 +62,10 @@ class ViewportSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colour = on
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurface.withValues(alpha: 0.55);
+    final text = label;
     return Hint(
       message: message,
       child: InkWell(
@@ -65,13 +73,24 @@ class ViewportSwitch extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
-          child: Icon(
-            icon,
-            size: 16,
-            color: on
-                ? theme.colorScheme.primary
-                : theme.colorScheme.onSurface.withValues(alpha: 0.55),
-          ),
+          child: text == null
+              ? Icon(icon, size: 16, color: colour)
+              // The icons' height, so a word among them does not step the row.
+              : SizedBox(
+                  height: 16,
+                  child: Center(
+                    widthFactor: 1,
+                    child: Text(
+                      text,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        height: 1,
+                        color: colour,
+                      ),
+                    ),
+                  ),
+                ),
         ),
       ),
     );

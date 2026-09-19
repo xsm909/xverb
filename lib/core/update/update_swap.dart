@@ -32,6 +32,17 @@ enum SwapOutcome {
   broken,
 }
 
+/// The moves a swap makes, in the order it makes them, for whoever is showing
+/// it. [rollingBack] is reached only when the new copy did not start.
+enum SwapStep {
+  movingAside,
+  placing,
+  starting,
+  waitingForWindow,
+  cleaning,
+  rollingBack,
+}
+
 class SwapResult {
   const SwapResult(this.outcome, [this.problem]);
   final SwapOutcome outcome;
@@ -55,6 +66,7 @@ class UpdateSwap {
     required this.staged,
     required this.launch,
     required this.waitForStart,
+    this.onStep,
   });
 
   /// The installed copy, the thing being replaced.
@@ -72,6 +84,10 @@ class UpdateSwap {
   /// application that starts and then fails to draw anything would pass that,
   /// and it is exactly the failure worth rolling back from.
   final Future<bool> Function(Directory app) waitForStart;
+
+  /// Told each move before it is made, so that a move which throws or never
+  /// returns has already been named.
+  final void Function(SwapStep step)? onStep;
 
   /// Where the old copy waits while the new one proves itself.
   Directory get previous => Directory('${target.path}.prev');
@@ -97,6 +113,7 @@ class UpdateSwap {
         StateError('There is nothing staged at ${staged.path}.'),
       );
     }
+    onStep?.call(SwapStep.movingAside);
     await repairInterrupted(target);
 
     // A leftover from an earlier update that was never cleared. It is the old
@@ -110,6 +127,7 @@ class UpdateSwap {
       await target.rename(previous.path);
     }
 
+    onStep?.call(SwapStep.placing);
     try {
       await staged.rename(target.path);
     } on Object catch (problem) {
@@ -122,7 +140,9 @@ class UpdateSwap {
     Object? trouble;
     var started = false;
     try {
+      onStep?.call(SwapStep.starting);
       await launch(target);
+      onStep?.call(SwapStep.waitingForWindow);
       started = await waitForStart(target);
     } on Object catch (problem) {
       trouble = problem;
@@ -130,7 +150,13 @@ class UpdateSwap {
 
     if (started) {
       if (await previous.exists()) {
-        await previous.delete(recursive: true);
+        onStep?.call(SwapStep.cleaning);
+        try {
+          await previous.delete(recursive: true);
+        } on Object {
+          // The new copy is in and running, so this is not a failure: an old
+          // copy that will not go yet is deleted by the next update.
+        }
       }
       return const SwapResult(SwapOutcome.installed);
     }
@@ -140,6 +166,7 @@ class UpdateSwap {
       // There was nothing here before, so there is nothing to go back to.
       return SwapResult(SwapOutcome.broken, trouble);
     }
+    onStep?.call(SwapStep.rollingBack);
     if (await target.exists()) {
       await target.delete(recursive: true);
     }

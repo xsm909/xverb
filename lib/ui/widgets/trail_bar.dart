@@ -87,6 +87,7 @@ class _TrailBarState extends State<TrailBar> {
       child: SingleChildScrollView(
         controller: _scroll,
         scrollDirection: Axis.horizontal,
+        physics: const _KeepsItsEnd(),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -101,6 +102,47 @@ class _TrailBarState extends State<TrailBar> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Keeps a trail that was showing its end showing it when its room changes —
+/// the history clock coming out beside it, a panel dragged narrower.
+///
+/// **Parking again after the frame is too late for this.** The room changes on
+/// every frame of the clock coming out, and a trail corrected a frame later is
+/// a trail whose last folder is cut and then found, over and over. This runs
+/// where the position is corrected for the new dimensions, inside the same
+/// layout, so no frame is drawn with the end cut. A trail somebody scrolled
+/// back along is left where they put it.
+class _KeepsItsEnd extends ScrollPhysics {
+  const _KeepsItsEnd({super.parent});
+
+  @override
+  _KeepsItsEnd applyTo(ScrollPhysics? ancestor) =>
+      _KeepsItsEnd(parent: buildParent(ancestor));
+
+  @override
+  double adjustPositionForNewDimensions({
+    required ScrollMetrics oldPosition,
+    required ScrollMetrics newPosition,
+    required bool isScrolling,
+    required double velocity,
+  }) {
+    // Where it is *now* against how far it could go *before*. Not
+    // `oldPosition.pixels`: the old metrics are the last layout's, and a jump
+    // to the end repaints without laying out again — measured, they still said
+    // 0 with the trail parked at its end. The extents do only change in a
+    // layout, so the old maximum is the right one to hold it against.
+    final wasAtEnd = oldPosition.hasContentDimensions &&
+        newPosition.hasPixels &&
+        newPosition.pixels >= oldPosition.maxScrollExtent - 0.5;
+    if (wasAtEnd && !isScrolling) return newPosition.maxScrollExtent;
+    return super.adjustPositionForNewDimensions(
+      oldPosition: oldPosition,
+      newPosition: newPosition,
+      isScrolling: isScrolling,
+      velocity: velocity,
     );
   }
 }

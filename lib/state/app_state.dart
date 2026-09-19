@@ -36,6 +36,9 @@ class AppState extends ChangeNotifier {
       settings: settings,
       isLeft: false,
     );
+    // Places remembered without their passwords get them back on the way in.
+    left.credentials = connections.withSecret;
+    right.credentials = connections.withSecret;
 
     // Each panel watches the other, so anything attached to one that asked to
     // follow a cursor gets told when that cursor moves. Nothing happens unless

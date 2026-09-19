@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 
 import '../../i18n/i18n.dart';
+import '../../sheet/csv_sheet_source.dart';
 import '../../vfs/fs_registry.dart';
 import '../../vfs/vfs_path.dart';
 import '../viewer.dart';
@@ -40,6 +41,24 @@ class DeclarativeRenderer {
     // an hour of music is not something to hold in memory — so what the content
     // carries is where the file is, and nothing is read here at all.
     if (spec.kind == 'audio') return _renderAudio(path, spec);
+
+    // A sheet does not want the bytes either — not all of them, not now. It
+    // is handed a way to read any stretch of the file, reads the head at once
+    // and the rest as it is scrolled to, so neither [RenderSpec.maxBytes] nor
+    // [RenderSpec.maxRows] applies: there is no ceiling to hit.
+    //
+    // **A delimited `table` is a sheet now, without the plugin saying so.**
+    // The viewer that ships CSV and TSV has always asked for `table` with a
+    // `csv` or `tsv` source, and a host older than sheets does not know the
+    // word `sheet` and would answer it with an error — so the manifest keeps
+    // asking for a table, and a host that has sheets draws one. `json` and
+    // `lines` stay tables: their rows are things, not cells.
+    if (spec.kind == 'sheet' ||
+        (spec.kind == 'table' &&
+            spec.source != 'json' &&
+            spec.source != 'lines')) {
+      return _renderSheet(path, spec);
+    }
 
     final Uint8List bytes;
     try {
@@ -141,6 +160,22 @@ class DeclarativeRenderer {
     } on Object catch (e) {
       return ViewerContent.error('$e');
     }
+  }
+
+  ViewerContent _renderSheet(VfsPath path, RenderSpec spec) {
+    final provider = fileSystems.resolve(path);
+    return ViewerContent(
+      kind: ViewerContentKind.sheet,
+      sheet: CsvSheetSource(
+        (start, end) => provider.openRead(path, start: start, end: end),
+        identity: path.toString(),
+        delimiter: spec.source == 'tsv'
+            ? '\t'
+            : spec.delimiter == 'auto' || spec.delimiter.isEmpty
+                ? null
+                : spec.delimiter[0],
+      ),
+    );
   }
 
   Future<Uint8List> _read(VfsPath path, int maxBytes) async {
@@ -369,14 +404,8 @@ class DeclarativeRenderer {
           ],
           truncated: truncated || lines.length > capped.length,
         );
-      case 'tsv':
-        return _tableFromSeparated(body, '\t', spec, truncated);
-      case 'csv':
       default:
-        final separator = spec.delimiter == 'auto'
-            ? _sniffDelimiter(body)
-            : (spec.delimiter.isEmpty ? ',' : spec.delimiter[0]);
-        return _tableFromSeparated(body, separator, spec, truncated);
+        return _tableFromJson(body, spec);
     }
   }
 
@@ -446,120 +475,6 @@ class DeclarativeRenderer {
       rows: [for (final item in items) ListingRow.of([item?.toString() ?? ''])],
       truncated: decoded.length > items.length,
     );
-  }
-
-  ViewerContent _tableFromSeparated(
-    String body,
-    String separator,
-    RenderSpec spec,
-    bool truncated,
-  ) {
-    final records = _parseSeparated(body, separator, spec.maxRows + 1);
-    if (records.isEmpty) {
-      return const ViewerContent(kind: ViewerContentKind.table);
-    }
-
-    final overflowed = records.length > spec.maxRows;
-    final rows = overflowed ? records.sublist(0, spec.maxRows) : records;
-
-    List<String> columns;
-    List<List<String>> body_;
-    if (spec.hasHeader) {
-      columns = rows.first;
-      body_ = rows.skip(1).toList();
-    } else {
-      final width = rows.fold<int>(0, (w, r) => r.length > w ? r.length : w);
-      columns = [for (var i = 0; i < width; i++) '${i + 1}'];
-      body_ = rows;
-    }
-
-    // Pad short records so every row matches the header width.
-    for (final row in body_) {
-      while (row.length < columns.length) {
-        row.add('');
-      }
-    }
-
-    return ViewerContent(
-      kind: ViewerContentKind.table,
-      columns: ListingColumn.list(columns),
-      rows: [for (final row in body_) ListingRow.of(row)],
-      truncated: truncated || overflowed,
-    );
-  }
-
-  /// A small RFC 4180 reader: quoted fields, doubled quotes, embedded
-  /// separators and newlines. Enough for real spreadsheets exported to CSV.
-  static List<List<String>> _parseSeparated(
-    String body,
-    String separator,
-    int maxRecords,
-  ) {
-    final records = <List<String>>[];
-    var record = <String>[];
-    final field = StringBuffer();
-    var inQuotes = false;
-
-    void endField() {
-      record.add(field.toString());
-      field.clear();
-    }
-
-    void endRecord() {
-      endField();
-      // Skip the blank record a trailing newline produces.
-      if (record.length > 1 || record.first.isNotEmpty) records.add(record);
-      record = <String>[];
-    }
-
-    for (var i = 0; i < body.length; i++) {
-      final char = body[i];
-
-      if (inQuotes) {
-        if (char == '"') {
-          if (i + 1 < body.length && body[i + 1] == '"') {
-            field.write('"');
-            i++;
-          } else {
-            inQuotes = false;
-          }
-        } else {
-          field.write(char);
-        }
-        continue;
-      }
-
-      if (char == '"' && field.isEmpty) {
-        inQuotes = true;
-      } else if (char == separator) {
-        endField();
-      } else if (char == '\n') {
-        endRecord();
-        if (records.length >= maxRecords) return records;
-      } else if (char != '\r') {
-        field.write(char);
-      }
-    }
-
-    if (field.isNotEmpty || record.isNotEmpty) endRecord();
-    return records;
-  }
-
-  /// Picks whichever candidate appears most often on the first line.
-  static String _sniffDelimiter(String body) {
-    final newline = body.indexOf('\n');
-    final line = newline < 0 ? body : body.substring(0, newline);
-
-    var best = ',';
-    var bestCount = 0;
-    for (final candidate in [',', ';', '\t', '|']) {
-      final count = candidate.allMatches(line).length;
-      if (count > bestCount) {
-        best = candidate;
-        bestCount = count;
-      }
-    }
-    return best;
   }
 
   static String _hexDump(Uint8List data) {

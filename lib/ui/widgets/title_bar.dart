@@ -1010,9 +1010,9 @@ class _MenuStripState extends State<_MenuStrip> {
 /// the icon's blue, because the bar is whatever colour the user made it and a
 /// fixed blue on a blue bar is a hole.
 ///
-/// The name is [kAppTitle], in one colour. One constant, so the bar, the window
-/// title and the About card cannot disagree about what the application is
-/// called — and since 1.0.0.428 one colour in all three of them. A short name
+/// The name is [kAppTitleShort], in one colour. The window title and the About
+/// card spell it out as [kAppTitle]; the bar has the mark beside it and says
+/// only the two letters. One colour since 1.0.0.428. A short name
 /// written in two colours reads as two things, and the mark beside it already
 /// carries the accent.
 class _Wordmark extends StatelessWidget {
@@ -1048,7 +1048,7 @@ class _Wordmark extends StatelessWidget {
         // borrowed the accent as well would be saying the same thing twice, an
         // inch apart.
         Text(
-          kAppTitle,
+          kAppTitleShort,
           style: style.copyWith(
             fontWeight: FontWeight.w200,
             color: foreground,

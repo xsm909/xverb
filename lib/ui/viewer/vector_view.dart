@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -37,14 +38,87 @@ class VectorView extends StatefulWidget {
 }
 
 class _VectorViewState extends State<VectorView> {
-  late List<_Drawn> _shapes = _build(widget.drawing);
+  late VectorPainting _painting = VectorPainting(widget.drawing);
 
   @override
   void didUpdateWidget(VectorView old) {
     super.didUpdateWidget(old);
     if (!identical(old.drawing, widget.drawing)) {
-      _shapes = _build(widget.drawing);
+      _painting = VectorPainting(widget.drawing);
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final drawing = widget.drawing;
+    return ZoomCanvas(
+      content: Size(drawing.width, drawing.height),
+      hasKeyboard: widget.hasKeyboard,
+      detail: widget.detail,
+      caption: (zoom) =>
+          '${_round(drawing.width)} × ${_round(drawing.height)}'
+          ' · ${tr('{count} shape(s)', {'count': drawing.shapes.length})}'
+          ' · ${zoomPercent(zoom)}%',
+      paint: _painting.paint,
+    );
+  }
+
+  static String _round(double value) =>
+      value == value.roundToDouble() ? value.round().toString() : value.toStringAsFixed(1);
+}
+
+/// A [VectorDrawing] made ready to paint, and painted at any scale.
+///
+/// **One painting for the reading and for the strip.** F3 draws a drawing
+/// through this, and so does a thumbnail — see [vectorThumbnail] — so the small
+/// copy on the strip is the same shapes the page shows, not a second reading of
+/// the file that could come out different.
+class VectorPainting {
+  VectorPainting(VectorDrawing drawing) : _shapes = _build(drawing);
+
+  final List<_Drawn> _shapes;
+
+  /// Paints the drawing with its origin at [at]'s corner, [scale] of the
+  /// drawing's own units to a pixel.
+  void paint(Canvas canvas, Rect at, double scale) {
+    canvas.save();
+    canvas.translate(at.left, at.top);
+    canvas.scale(scale);
+    for (final drawn in _shapes) {
+      final words = drawn.words;
+      if (words != null) {
+        _write(canvas, drawn.shape, words);
+        continue;
+      }
+      final fill = drawn.shape.fill;
+      if (fill != null || drawn.fill != null) {
+        canvas.drawPath(
+          drawn.path,
+          Paint()
+            ..color = Color(fill ?? 0xFF000000)
+            ..shader = drawn.fill
+            ..isAntiAlias = true,
+        );
+      }
+      final stroke = drawn.shape.stroke;
+      if ((stroke != null || drawn.stroke != null) &&
+          drawn.shape.strokeWidth > 0) {
+        canvas.drawPath(
+          drawn.path,
+          Paint()
+            ..color = Color(stroke ?? 0xFF000000)
+            ..shader = drawn.stroke
+            ..style = PaintingStyle.stroke
+            // In the drawing's own units, so the canvas's own scale makes
+            // it the right number of pixels — which is the whole point.
+            ..strokeWidth = drawn.shape.strokeWidth
+            ..strokeCap = _cap(drawn.shape.cap)
+            ..strokeJoin = _join(drawn.shape.join)
+            ..isAntiAlias = true,
+        );
+      }
+    }
+    canvas.restore();
   }
 
   static List<_Drawn> _build(VectorDrawing drawing) {
@@ -146,60 +220,6 @@ class _VectorViewState extends State<VectorView> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final drawing = widget.drawing;
-    return ZoomCanvas(
-      content: Size(drawing.width, drawing.height),
-      hasKeyboard: widget.hasKeyboard,
-      detail: widget.detail,
-      caption: (zoom) =>
-          '${_round(drawing.width)} × ${_round(drawing.height)}'
-          ' · ${tr('{count} shape(s)', {'count': drawing.shapes.length})}'
-          ' · ${zoomPercent(zoom)}%',
-      paint: (canvas, at, scale) {
-        canvas.save();
-        canvas.translate(at.left, at.top);
-        canvas.scale(scale);
-        for (final drawn in _shapes) {
-          final words = drawn.words;
-          if (words != null) {
-            _write(canvas, drawn.shape, words);
-            continue;
-          }
-          final fill = drawn.shape.fill;
-          if (fill != null || drawn.fill != null) {
-            canvas.drawPath(
-              drawn.path,
-              Paint()
-                ..color = Color(fill ?? 0xFF000000)
-                ..shader = drawn.fill
-                ..isAntiAlias = true,
-            );
-          }
-          final stroke = drawn.shape.stroke;
-          if ((stroke != null || drawn.stroke != null) &&
-              drawn.shape.strokeWidth > 0) {
-            canvas.drawPath(
-              drawn.path,
-              Paint()
-                ..color = Color(stroke ?? 0xFF000000)
-                ..shader = drawn.stroke
-                ..style = PaintingStyle.stroke
-                // In the drawing's own units, so the canvas's own scale makes
-                // it the right number of pixels — which is the whole point.
-                ..strokeWidth = drawn.shape.strokeWidth
-                ..strokeCap = _cap(drawn.shape.cap)
-                ..strokeJoin = _join(drawn.shape.join)
-                ..isAntiAlias = true,
-            );
-          }
-        }
-        canvas.restore();
-      },
-    );
-  }
-
   /// One run of text, under its own transform and off its own baseline.
   static void _write(Canvas canvas, VectorShape shape, TextPainter words) {
     final at = shape.at.length >= 2 ? shape.at : const [0.0, 0.0];
@@ -228,9 +248,6 @@ class _VectorViewState extends State<VectorView> {
     canvas.restore();
   }
 
-  static String _round(double value) =>
-      value == value.roundToDouble() ? value.round().toString() : value.toStringAsFixed(1);
-
   static StrokeCap _cap(String name) => switch (name) {
         'round' => StrokeCap.round,
         'square' => StrokeCap.square,
@@ -242,6 +259,39 @@ class _VectorViewState extends State<VectorView> {
         'bevel' => StrokeJoin.bevel,
         _ => StrokeJoin.miter,
       };
+}
+
+/// [drawing] as a small picture, [pixels] across its longer side, as PNG.
+///
+/// **Drawn by the host, whole.** The engine has no decoder for SVG, EPS or
+/// PostScript, so a strip of drawings was a strip of empty squares — and a
+/// plugin that reads them already hands the host the shapes, which the host
+/// knows how to paint at any size. Rasterising in the plugin would need a
+/// renderer there; here it is the one F3 uses.
+///
+/// **Nothing is painted under it**: a drawing that has no background of its
+/// own keeps none, and stands on the strip the way it stands in F3. White
+/// paper under every icon was a background the file never had. Null for a drawing with nothing in it.
+Future<Uint8List?> vectorThumbnail(VectorDrawing drawing, int pixels) async {
+  if (drawing.isEmpty || pixels <= 0) return null;
+  final scale = pixels / math.max(drawing.width, drawing.height);
+  final width = math.max(1, (drawing.width * scale).round());
+  final height = math.max(1, (drawing.height * scale).round());
+  final bounds = Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble());
+
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder, bounds);
+  canvas.clipRect(bounds);
+  VectorPainting(drawing).paint(canvas, bounds, scale);
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(width, height);
+  picture.dispose();
+  try {
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    return data?.buffer.asUint8List();
+  } finally {
+    image.dispose();
+  }
 }
 
 class _Drawn {

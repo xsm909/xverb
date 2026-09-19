@@ -176,6 +176,10 @@ class FilePanel extends StatefulWidget {
     required this.locationKey,
     required this.cursorKey,
     this.locationMenuOpen = false,
+    this.onOpenHistory,
+    this.historyMenuOpen = false,
+    this.hasHistory,
+    this.historyClockKey,
   });
 
   final PanelController controller;
@@ -225,6 +229,27 @@ class FilePanel extends StatefulWidget {
 
   /// Whether this panel's location menu is currently showing.
   final bool locationMenuOpen;
+
+  /// Opens the folder history under the clock at the end of the path bar; the
+  /// rect is the clock's. Null, and the bar has no clock.
+  final ValueChanged<Rect>? onOpenHistory;
+
+  /// Whether the history is hanging off this panel's clock, which keeps the
+  /// clock out and lit under it.
+  final bool historyMenuOpen;
+
+  /// Whether the history has anything to go to — asked when the pointer comes
+  /// onto the bar, so the clock is not offered over nothing.
+  final bool Function()? hasHistory;
+
+  /// Sits on the clock, so F12 can hang the history where the pointer would
+  /// have opened it.
+  final GlobalKey? historyClockKey;
+
+  /// How wide the clock is once it is out, its gap included — where a history
+  /// opened from the keyboard hangs, before the clock has grown into the place.
+  static const double historyClockWidth =
+      _HistoryClockState.width + _HistoryClockState.gap;
 
   @override
   State<FilePanel> createState() => _FilePanelState();
@@ -835,6 +860,10 @@ class _FilePanelState extends State<FilePanel>
                     locationKey: widget.locationKey,
                     onOpenLocations: widget.onOpenLocations,
                     menuOpen: widget.locationMenuOpen,
+                    onOpenHistory: widget.onOpenHistory,
+                    historyMenuOpen: widget.historyMenuOpen,
+                    hasHistory: widget.hasHistory,
+                    historyClockKey: widget.historyClockKey,
                   ),
                   if (!panel.isAttached)
                     _ColumnHeader(settings: settings, widths: widths),
@@ -1142,13 +1171,17 @@ class _PanelSelectionState extends State<PanelSelection>
   }
 }
 
-class _PathBar extends StatelessWidget {
+class _PathBar extends StatefulWidget {
   const _PathBar({
     required this.panel,
     required this.isActive,
     required this.locationKey,
     required this.onOpenLocations,
     required this.menuOpen,
+    this.onOpenHistory,
+    this.historyMenuOpen = false,
+    this.hasHistory,
+    this.historyClockKey,
   });
 
   final PanelController panel;
@@ -1160,16 +1193,39 @@ class _PathBar extends StatelessWidget {
   /// under it — whether the menu was opened by the pointer or by Alt+F1.
   final bool menuOpen;
 
+  /// See [FilePanel.onOpenHistory]. Null, and there is no clock.
+  final ValueChanged<Rect>? onOpenHistory;
+  final bool historyMenuOpen;
+  final bool Function()? hasHistory;
+  final GlobalKey? historyClockKey;
+
+  @override
+  State<_PathBar> createState() => _PathBarState();
+}
+
+class _PathBarState extends State<_PathBar> {
+  /// Whether the pointer is anywhere on the bar, which is when the clock
+  /// comes out.
+  bool _hovered = false;
+
   @override
   Widget build(BuildContext context) {
+    final panel = widget.panel;
+    final isActive = widget.isActive;
     final theme = context.watch<SettingsStore>().appearance;
+    // Not while something else has the panel: its title stands where the
+    // trail was, and a way to leave for a folder belongs to the listing.
+    final hasClock = widget.onOpenHistory != null && !panel.isAttached;
 
     // A result set has no trail to walk: its rows come from all over the tree.
     final trail = panel.isVirtual
         ? const <VfsPath>[]
         : panel.location?.trail ?? const <VfsPath>[];
 
-    return Container(
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Container(
       height: theme.pathBarHeight,
       color: theme.effectiveHeaderBackground,
       padding: const EdgeInsets.fromLTRB(4, 4, 6, 4),
@@ -1185,11 +1241,11 @@ class _PathBar extends StatelessWidget {
           // The drive stays put whatever the path does: it is the way to the
           // other drives, and Alt+F1 hangs its menu off it.
           _LocationPill(
-            key: locationKey,
+            key: widget.locationKey,
             panel: panel,
             isActive: isActive,
-            open: menuOpen,
-            onOpen: onOpenLocations,
+            open: widget.menuOpen,
+            onOpen: widget.onOpenLocations,
           ),
           Expanded(
             child: panel.isAttached
@@ -1210,6 +1266,19 @@ class _PathBar extends StatelessWidget {
                     onGo: (step) => unawaited(panel.navigateTo(step)),
                   ),
           ),
+          // **The clock**, at the end of the bar while the pointer is on it:
+          // the quick way back to a folder in the history. The trail gives it
+          // room rather than lying under it, and keeps its end in sight while
+          // it does — see TrailBar.
+          if (hasClock)
+            _HistoryClock(
+              key: widget.historyClockKey,
+              shown: widget.historyMenuOpen ||
+                  (_hovered && (widget.hasHistory?.call() ?? true)),
+              open: widget.historyMenuOpen,
+              isActive: isActive,
+              onOpen: widget.onOpenHistory!,
+            ),
           if (panel.isLoading || (panel.attachment?.isLoading ?? false)) ...[
             const SizedBox(width: 6),
             SizedBox(
@@ -1222,6 +1291,146 @@ class _PathBar extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    ),
+    );
+  }
+}
+
+/// The clock at the end of a path bar, and the history under it.
+///
+/// **Resting on it opens the history — no press.** It is the quick way back to
+/// a folder, and a way that needs a press after the pointer has already gone to
+/// it is two acts where one will do. A press still opens it, for a pointer
+/// that cannot rest anywhere. The rest is short but not nothing: a pointer
+/// crossing the bar on its way to somewhere else must not drop a menu on it.
+///
+/// Out only while the pointer is on the bar or the history is hanging off it,
+/// and it comes and goes by growing and fading, never in one frame.
+class _HistoryClock extends StatefulWidget {
+  const _HistoryClock({
+    super.key,
+    required this.shown,
+    required this.open,
+    required this.isActive,
+    required this.onOpen,
+  });
+
+  final bool shown;
+  final bool open;
+  final bool isActive;
+  final ValueChanged<Rect> onOpen;
+
+  @override
+  State<_HistoryClock> createState() => _HistoryClockState();
+}
+
+class _HistoryClockState extends State<_HistoryClock> {
+  /// How long the pointer rests on the clock before the history opens.
+  static const Duration _rest = Duration(milliseconds: 160);
+
+  /// The clock's own width, and the gap between it and the trail.
+  static const double width = 26;
+  static const double gap = 4;
+
+  bool _over = false;
+  Timer? _resting;
+
+  @override
+  void didUpdateWidget(_HistoryClock old) {
+    super.didUpdateWidget(old);
+    // Put away with the pointer still on it: a region that leaves the screen
+    // is not told the pointer left, so it is said here.
+    if (!widget.shown && old.shown) {
+      _resting?.cancel();
+      _over = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _resting?.cancel();
+    super.dispose();
+  }
+
+  void _open() {
+    _resting?.cancel();
+    if (widget.open) return;
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    widget.onOpen(box.localToGlobal(Offset.zero) & box.size);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.watch<SettingsStore>().appearance;
+    final lit = widget.open || _over;
+
+    // The pill's own three states, so the two read as one kind of thing.
+    final Color background;
+    final Color foreground;
+    if (widget.open) {
+      background = theme.accentColor.withValues(alpha: 0.85);
+      foreground = theme.accentColor.computeLuminance() > 0.5
+          ? Colors.black
+          : Colors.white;
+    } else if (_over) {
+      background = theme.accentColor.withValues(alpha: 0.28);
+      foreground = theme.headerForeground;
+    } else {
+      background = theme.headerForeground.withValues(alpha: 0.07);
+      foreground = widget.isActive
+          ? theme.headerForeground
+          : theme.headerForeground.withValues(alpha: 0.6);
+    }
+
+    final clock = MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) {
+        setState(() => _over = true);
+        _resting?.cancel();
+        _resting = Timer(_rest, _open);
+      },
+      onExit: (_) {
+        _resting?.cancel();
+        if (mounted) setState(() => _over = false);
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _open,
+        child: Container(
+          width: width,
+          height: theme.chromeRowHeight,
+          margin: const EdgeInsets.only(left: gap),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+              color: lit
+                  ? theme.accentColor
+                  : theme.headerForeground.withValues(alpha: 0.12),
+            ),
+          ),
+          child: Icon(Icons.history, size: 15, color: foreground),
+        ),
+      ),
+    );
+
+    // The same shape at every value, so the region under the pointer is never
+    // rebuilt out from under it: at nothing it is simply no wide, and nothing
+    // of no width can be pointed at.
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: widget.shown ? 1 : 0),
+      duration: motionOf(context, kHistoryClockDuration),
+      curve: kBothCurve,
+      child: clock,
+      builder: (context, t, child) => ClipRect(
+        child: Align(
+          key: const ValueKey('history-clock-slot'),
+          alignment: Alignment.centerLeft,
+          widthFactor: t,
+          child: Opacity(opacity: t, child: child),
+        ),
       ),
     );
   }

@@ -11,6 +11,8 @@ add_executable(${BINARY_NAME} WIN32
   "audio.cpp"
   "backdrop.cpp"
   "file_transfer.cpp"
+  "gl_context.cpp"
+  "mesh3d.cpp"
   "shell_menu.cpp"
   "flutter_window.cpp"
   "main.cpp"

@@ -8,6 +8,7 @@
 #include "audio.h"
 #include "backdrop.h"
 #include "file_transfer.h"
+#include "mesh3d.h"
 #include "shell_menu.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -37,6 +38,9 @@ bool FlutterWindow::OnCreate() {
   RegisterShellMenuChannel(flutter_controller_->engine(), GetHandle());
   // The machine's own player, for the sound viewer.
   RegisterAudioChannel(flutter_controller_->engine());
+  // The machine's own graphics card, for the model viewer — an addition to the
+  // renderer Dart already has, never a replacement for it.
+  RegisterMesh3dChannel(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
   // Files dragged in and out. On Flutter's own window rather than this one:
   // OLE looks for a drop target on the window under the pointer, and that is

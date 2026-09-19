@@ -32,10 +32,11 @@ class RenderSpec {
         maxRows: (json['maxRows'] as num?)?.toInt() ?? 5000,
       );
 
-  /// One of `text`, `markdown`, `hex`, `image`, `table`, `audio`.
+  /// One of `text`, `markdown`, `hex`, `image`, `table`, `sheet`, `audio`.
   final String kind;
 
-  /// For `table`: `csv`, `tsv`, `json` or `lines`.
+  /// For `table`: `csv`, `tsv`, `json` or `lines`. For `sheet`: `csv` or
+  /// `tsv`.
   final String source;
 
   /// For `text`: `none` or `json-pretty`.
@@ -66,6 +67,6 @@ class RenderSpec {
 
   /// True when the spec names a primitive the host actually implements.
   bool get isSupported =>
-      const {'text', 'markdown', 'hex', 'image', 'table', 'audio'}
+      const {'text', 'markdown', 'hex', 'image', 'table', 'sheet', 'audio'}
           .contains(kind);
 }

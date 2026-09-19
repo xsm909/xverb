@@ -155,6 +155,10 @@ class _ImageViewState extends State<ImageView> {
     final size = Size(picture.width.toDouble(), picture.height.toDouble());
     return ZoomCanvas(
       content: size,
+      // One pixel of the file on one pixel of the screen, until the reader
+      // presses one of the others — asked for on 2026-09-12. What runs off
+      // the edge is reached with the hand and the arrows.
+      opensIn: ZoomMode.actual,
       hasKeyboard: widget.hasKeyboard,
       detail: widget.detail,
       caption: (zoom) => '${picture.width} × ${picture.height}'
