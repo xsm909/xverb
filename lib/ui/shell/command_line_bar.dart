@@ -7,6 +7,7 @@ import '../../core/settings/settings_store.dart';
 import '../../core/shell/command_line.dart';
 import '../../core/shell/shell_kind.dart';
 import '../../core/vfs/vfs_path.dart';
+import '../widgets/press_and_hold.dart' show kPressDevices;
 import '../widgets/x_button.dart';
 import '../windows/window_dialogs.dart';
 
@@ -546,6 +547,8 @@ class _ResizeHandleState extends State<_ResizeHandle> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
+        // Pulled by a hand, not by the trackpad's scroll: see kPressDevices.
+        supportedDevices: kPressDevices,
         onVerticalDragStart: (_) => setState(() => _dragging = true),
         onVerticalDragUpdate: (details) => widget.onDrag(details.delta.dy),
         onVerticalDragEnd: (_) {

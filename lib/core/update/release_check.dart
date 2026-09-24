@@ -115,7 +115,7 @@ class ReleaseArchive {
 /// about GitHub: a directory standing in for the repository is how the whole
 /// path is exercised without a network and without publishing anything.
 abstract class ReleaseSource {
-  /// Every file name in the release folder. Throws if the source cannot be
+  /// Every published file name. Throws if the source cannot be
   /// read — which is not the same as a source holding no release, and the two
   /// must not be reported alike.
   Future<List<String>> fileNames();
@@ -135,28 +135,34 @@ abstract class ReleaseSource {
   String get describe;
 }
 
-/// The public release repository, read through the contents endpoint, which
-/// lists a directory without cloning it.
+/// The public repository's GitHub releases: one release per version, tagged
+/// `v<version>`, with the archives, their sums, the source and the notes
+/// attached to it.
+///
+/// Files attached to a release rather than committed to a folder, because a
+/// binary in git stays in the history for ever and the repository is the one
+/// people clone. The listing is still read for file names and nothing else —
+/// the release titles and bodies are for people, and the newest release is
+/// the largest version named, not whichever GitHub calls latest.
 class GithubReleaseSource implements ReleaseSource {
   const GithubReleaseSource({
-    this.repository = 'xsm909/xverb-release',
-    this.folder = 'release',
+    this.repository = 'xsm909/xverb',
     this.timeout = const Duration(seconds: 20),
   });
 
   final String repository;
-  final String folder;
   final Duration timeout;
 
   @override
-  String get describe => 'https://github.com/$repository/tree/main/$folder';
+  String get describe => 'https://github.com/$repository/releases';
 
   @override
   Future<List<String>> fileNames() async {
     final client = HttpClient()..connectionTimeout = timeout;
     try {
-      final url =
-          Uri.https('api.github.com', '/repos/$repository/contents/$folder');
+      final url = Uri.https('api.github.com', '/repos/$repository/releases', {
+        'per_page': '100',
+      });
       final request = await client.getUrl(url);
       // GitHub answers some clients with 403 unless they name themselves, and
       // the JSON version header keeps the answer's shape from moving under us.
@@ -168,22 +174,45 @@ class GithubReleaseSource implements ReleaseSource {
         throw HttpException('HTTP ${response.statusCode}', uri: url);
       }
       final body = await response.transform(utf8.decoder).join();
-      final decoded = jsonDecode(body);
-      if (decoded is! List) {
-        throw const FormatException('The release listing is not a list.');
-      }
-      return [
-        for (final entry in decoded)
-          if (entry is Map && entry['name'] is String) entry['name'] as String,
-      ];
+      return assetNames(jsonDecode(body));
     } finally {
       client.close(force: true);
     }
   }
 
-  /// Read from `raw.githubusercontent.com` rather than through the API: the
-  /// contents endpoint answers with base64 inside JSON and refuses outright
-  /// over a megabyte, and a release is twenty.
+  /// Every file attached to every release in a decoded listing. Pure, so the
+  /// shape of GitHub's answer is tested without a network.
+  static List<String> assetNames(Object? decoded) {
+    if (decoded is! List) {
+      throw const FormatException('The release listing is not a list.');
+    }
+    return [
+      for (final release in decoded)
+        if (release is Map && release['assets'] is List)
+          for (final asset in release['assets'] as List)
+            if (asset is Map && asset['name'] is String)
+              asset['name'] as String,
+    ];
+  }
+
+  /// Where a published file is downloaded from. The tag is read out of the
+  /// name — every file of a release carries its version — so a fetch needs no
+  /// listing kept from before, and a name that carries no version is refused
+  /// rather than guessed at.
+  Uri downloadUrl(String name) {
+    final match = RegExp(r'^xverb-([0-9]+(?:\.[0-9]+){0,3})-').firstMatch(name);
+    if (match == null) {
+      throw FormatException('No version in the file name.', name);
+    }
+    return Uri.https(
+      'github.com',
+      '/$repository/releases/download/v${match.group(1)}/$name',
+    );
+  }
+
+  /// GitHub answers the download with a redirect to its file storage, which
+  /// the client follows on its own. The API is not used for this: it answers
+  /// with JSON, and a release is twenty megabytes.
   @override
   Future<void> fetch(
     String name,
@@ -192,8 +221,7 @@ class GithubReleaseSource implements ReleaseSource {
   }) async {
     final client = HttpClient()..connectionTimeout = timeout;
     try {
-      final url = Uri.https(
-          'raw.githubusercontent.com', '/$repository/main/$folder/$name');
+      final url = downloadUrl(name);
       final request = await client.getUrl(url);
       request.headers.set(HttpHeaders.userAgentHeader, 'xverb');
       final response = await request.close();

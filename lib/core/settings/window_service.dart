@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
+import 'package:macos_window_utils/macos_window_utils.dart' as macos;
 import 'package:window_manager/window_manager.dart';
 
 import '../version.dart';
@@ -262,6 +263,14 @@ class WindowService {
         color: _tintFor(appearance),
         dark: appearance.darkChrome,
       );
+      // The effect view follows the window's active state by default, so the
+      // program went flat the moment another window took focus. Held active,
+      // it stays frosted whichever window is in front.
+      if (Platform.isMacOS && effect != acrylic.WindowEffect.disabled) {
+        await macos.WindowManipulator.setNSVisualEffectViewState(
+          macos.NSVisualEffectViewState.active,
+        );
+      }
       _current = effect;
       WindowLog.write('$reason -> ${effect.name} ok');
     } on Object catch (e) {

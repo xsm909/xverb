@@ -56,3 +56,6 @@ __pycache__/
 
 # Scratch work that is not part of the build.
 /temp/
+
+# The local permission list is this machine's, and it names this machine's paths.
+/.*/settings.local.json

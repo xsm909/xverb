@@ -137,7 +137,7 @@ of a browser download is not executable. The installer takes whichever it finds
 first: an application already unpacked beside it, an archive beside it, the
 newest `xverb-*` archive in Downloads — the real one, read from the desktop's
 own configuration — or the newest release fetched from
-[xsm909/xverb-release](https://github.com/xsm909/xverb-release) and checked
+[the Releases page](https://github.com/xsm909/xverb/releases) and checked
 against its published sum.
 
 ### Signing, quarantine, and what the installer does
@@ -165,8 +165,8 @@ it. Unpack the archive yourself and go through Open Anyway — the flag stays
 where it is and the application runs. Or build it: see [Building](#building)
 above.
 
-Every archive has its own `.sha256` lying beside it in the
-[release folder](https://github.com/xsm909/xverb-release/tree/main/release).
+Every archive has its own `.sha256` lying beside it on the
+[Releases page](https://github.com/xsm909/xverb/releases).
 That is the sum the installer checks against when it fetches a release itself.
 Be clear about what it is for: it catches a download that arrived broken, not a
 release that was replaced — the sum sits in the same place as the archive, so

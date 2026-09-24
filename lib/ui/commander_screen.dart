@@ -1896,7 +1896,7 @@ class _CommanderScreenState extends State<CommanderScreen>
       entry: entry,
       actions: _menuActions,
     );
-    if (mounted) _keyboard.requestFocus();
+    _keyboardBackAfterMenu();
   }
 
   /// The screen's own methods, handed to the menu.
@@ -2186,7 +2186,14 @@ class _CommanderScreenState extends State<CommanderScreen>
   /// Nothing at all while there is nothing to show and nothing to add. A
   /// submenu offering an empty list is a row that has to be opened to learn
   /// there is nothing in it.
-  List<MenuNode> _historyNodes(PanelController target) {
+  ///
+  /// [rows] keeps one row per folder across rebuilds while a menu is open, so
+  /// a folder that changes places in the history is the *same* row in a new
+  /// place, and glides there, rather than a new row where an old one stood.
+  List<MenuNode> _historyNodes(
+    PanelController target, {
+    Map<String, MenuItem>? rows,
+  }) {
     final history = _app.history;
     final favourites = history.favourites;
     // This panel's folder, where it is one: a virtual listing is a question
@@ -2206,41 +2213,9 @@ class _CommanderScreenState extends State<CommanderScreen>
     // **Nothing is written on a row but the name.** A count was drawn there for
     // one build and taken out again, and the same goes for a time. The menu is
     // opened to go somewhere, not to read a table.
-    MenuItem row(VfsPath where) => MenuItem(
-      where.label,
-      icon: Icons.folder_outlined,
-      // What it is, under what it is called — a name on its own is ambiguous
-      // the moment two folders are called `src`. Searchable, and shown on a
-      // hint when the pointer rests on the row.
-      keywords: [where.display],
-      hint: where.display,
-      // **A cross on the row, under the pointer or under the keyboard.**
-      // A list built
-      // out of what somebody did will sooner or later hold something they would
-      // rather it did not, and clearing the lot is too big an answer for one
-      // folder. The menu takes the row out itself, so three of them is three
-      // presses rather than three journeys back down to the same submenu.
-      onRemove: () => unawaited(history.forget(where)),
-      // **The pin, beside it.** Ranking by time is a good guess and is only a
-      // guess; a pin is somebody saying outright, and a pinned folder leads the
-      // list and stays there. Not offered at all once ten are pinned — the list
-      // is ten, so ten pins is a list with nothing else in it, and that is the
-      // point of pinning.
-      isPinned: () => history.isPinned(where),
-      // **Dragged into whatever order is wanted**, any row of it: a row put
-      // somewhere by hand is pinned there with every row above it, and a pin
-      // carried below the rest is let go — see [FolderHistory.place].
-      onDragged: (rows) => unawaited(history.place(where, by: rows)),
-      onPin: history.isPinned(where) || history.canPin
-          ? () => unawaited(
-              history.pin(where, pinned: !history.isPinned(where)),
-            )
-          : null,
-      onSelected: () {
-        _app.activate(target);
-        unawaited(target.navigateTo(where));
-      },
-    );
+    MenuItem row(VfsPath where) =>
+        rows?.putIfAbsent(where.toString(), () => _historyRow(target, where)) ??
+        _historyRow(target, where);
 
     return [
         for (final where in favourites) row(where),
@@ -2271,6 +2246,46 @@ class _CommanderScreenState extends State<CommanderScreen>
     ];
   }
 
+  /// One folder's row in the history. See [_historyNodes].
+  MenuItem _historyRow(PanelController target, VfsPath where) {
+    final history = _app.history;
+    return MenuItem(
+      where.label,
+      icon: Icons.folder_outlined,
+      // What it is, under what it is called — a name on its own is ambiguous
+      // the moment two folders are called `src`. Searchable, and shown on a
+      // hint when the pointer rests on the row.
+      keywords: [where.display],
+      hint: where.display,
+      // **A cross on the row, under the pointer or under the keyboard.**
+      // A list built
+      // out of what somebody did will sooner or later hold something they would
+      // rather it did not, and clearing the lot is too big an answer for one
+      // folder. The menu takes the row out itself, so three of them is three
+      // presses rather than three journeys back down to the same submenu.
+      onRemove: () => unawaited(history.forget(where)),
+      // **The pin, beside it.** Ranking by time is a good guess and is only a
+      // guess; a pin is somebody saying outright, and a pinned folder leads the
+      // list and stays there. Not offered at all once ten are pinned — the list
+      // is ten, so ten pins is a list with nothing else in it, and that is the
+      // point of pinning.
+      isPinned: () => history.isPinned(where),
+      // **Dragged into whatever order is wanted**, any row of it: a row put
+      // somewhere by hand is pinned, it alone, and a pin carried below the
+      // rest is let go — see [FolderHistory.place].
+      onDragged: (rows) => unawaited(history.place(where, by: rows)),
+      onPin: history.isPinned(where) || history.canPin
+          ? () => unawaited(
+              history.pin(where, pinned: !history.isPinned(where)),
+            )
+          : null,
+      onSelected: () {
+        _app.activate(target);
+        unawaited(target.navigateTo(where));
+      },
+    );
+  }
+
   /// The History submenu of the location menu — [_historyNodes] under a row
   /// of their own, and nothing at all when there is nothing in them.
   List<MenuNode> _historyGroup(PanelController target) {
@@ -2289,23 +2304,57 @@ class _CommanderScreenState extends State<CommanderScreen>
   /// is the one thing the clock is for, so the rows are the menu rather than
   /// a row inside one. Choosing a folder takes [panel] there.
   Future<void> _showHistoryMenu(PanelController panel, Rect anchor) async {
-    final nodes = _historyNodes(panel);
-    if (nodes.isEmpty || _historyMenuPanel != null) return;
+    final rows = <String, MenuItem>{};
+    final nodes = _historyNodes(panel, rows: rows);
+    // Only this panel's own history holds its clock shut. The other panel's
+    // may be open: this one replaces it, the one closing as this one comes.
+    if (nodes.isEmpty || identical(_historyMenuPanel, panel)) return;
     _app.activate(panel);
     setState(() => _historyMenuPanel = panel);
+    final clock = _historyClockKeyOf(panel);
+
+    // **The order follows the history while the menu is open.** A folder
+    // pinned goes up among the pins, over the rule, and one let go goes back
+    // down to where its time puts it — there and then, gliding, not at the
+    // next opening. The same row objects each time (see [_historyNodes]), so
+    // it is one row travelling rather than the list being redrawn.
+    final live = ValueNotifier<List<MenuNode>>(nodes);
+    void onHistory() => live.value = _historyNodes(panel, rows: rows);
+    final history = _app.history..addListener(onHistory);
     try {
       await showAppContextMenu(
         context: context,
         anchorRect: anchor,
         style: menuAppearanceFrom(_settings.appearance),
         nodes: nodes,
+        live: live,
         searchHint: tr('Search the history'),
+        // It opens on a rest, so a click that follows is the same wish late,
+        // not a wish to close: the clock plays the press, the menu stays.
+        onAnchorPress: (down) => pressHistoryClock(clock, down),
       );
     } finally {
-      if (mounted) setState(() => _historyMenuPanel = null);
+      history.removeListener(onHistory);
+      live.dispose();
+      pressHistoryClock(clock, false);
+      if (mounted && identical(_historyMenuPanel, panel)) {
+        setState(() => _historyMenuPanel = null);
+      }
     }
-    if (mounted) _keyboard.requestFocus();
+    _keyboardBackAfterMenu();
   }
+
+  /// The keyboard back to the panels once a menu has gone — unless another
+  /// menu has come up in its place, whose keyboard it now is.
+  void _keyboardBackAfterMenu() {
+    if (mounted && !appContextMenuOpen) _keyboard.requestFocus();
+  }
+
+  GlobalKey _historyClockKeyOf(PanelController panel) =>
+      identical(panel, _app.left)
+          ? _leftHistoryClockKey
+          : _rightHistoryClockKey;
+
 
   /// F12: [panel]'s history, hanging off the clock at the end of its path bar
   /// exactly as the pointer opens it.
@@ -2317,21 +2366,10 @@ class _CommanderScreenState extends State<CommanderScreen>
   /// where the clock will stand rather than waiting for it to grow there.
   Future<void> _openHistoryByKey(PanelController panel) async {
     if (_historyNodes(panel).isEmpty) return;
-    final key = identical(panel, _app.left)
-        ? _leftHistoryClockKey
-        : _rightHistoryClockKey;
-    final clock = key.currentContext?.findRenderObject() as RenderBox?;
+    final clock = historyClockRect(_historyClockKeyOf(panel));
     final Rect anchor;
-    if (clock != null && clock.hasSize) {
-      // At no width while it is put away, so its right edge is where the
-      // clock ends once it is out.
-      final end = clock.localToGlobal(Offset(clock.size.width, 0));
-      anchor = Rect.fromLTWH(
-        end.dx - FilePanel.historyClockWidth,
-        end.dy,
-        FilePanel.historyClockWidth,
-        clock.size.height,
-      );
+    if (clock != null) {
+      anchor = clock;
     } else {
       // No clock where the panel is — something else has it. The pill is the
       // honest place to hang a menu about where this panel has been.
@@ -2392,9 +2430,14 @@ class _CommanderScreenState extends State<CommanderScreen>
     // **Held on the state, not only in the `finally`.** The window can be torn
     // down with the menu still up — a test does exactly that — and then the
     // `await` below never returns and the timer outlives everything.
+    //
+    // **And it is this menu's watch, not the slot's.** The other panel's drive
+    // menu can open while this one is still closing, and each stops only the
+    // watch it started.
+    _stopWatchingRoots();
     _rootsWatch = onRoots;
     _rootsWatched = _app.fileSystems..addListener(onRoots);
-    _rootsPoll = Timer.periodic(
+    final poll = _rootsPoll = Timer.periodic(
       const Duration(milliseconds: 1500),
       (_) => unawaited(_app.fileSystems.refreshRoots()),
     );
@@ -2407,15 +2450,31 @@ class _CommanderScreenState extends State<CommanderScreen>
         nodes: live.value,
         live: live,
         searchHint: tr('Search drives and connections'),
+        // **Alt+F1 and Alt+F2 still mean the two panels' drives** with one of
+        // them open. Before, the menu took the keyboard and the only way to
+        // the other panel's drives was Escape first. The same key again
+        // leaves it where it is.
+        onAltKey: (key) {
+          final target = key == LogicalKeyboardKey.f1
+              ? _app.left
+              : key == LogicalKeyboardKey.f2
+                  ? _app.right
+                  : null;
+          if (target == null) return false;
+          if (!identical(target, panel)) unawaited(_openLocationMenu(target));
+          return true;
+        },
       );
     } finally {
-      _stopWatchingRoots();
+      if (identical(_rootsPoll, poll)) _stopWatchingRoots();
       live.dispose();
     }
 
     if (!mounted) return;
-    setState(() => _locationMenuPanel = null);
-    _keyboard.requestFocus();
+    if (identical(_locationMenuPanel, panel)) {
+      setState(() => _locationMenuPanel = null);
+    }
+    _keyboardBackAfterMenu();
   }
 
   /// The poll that keeps the open drive menu current, the listener that

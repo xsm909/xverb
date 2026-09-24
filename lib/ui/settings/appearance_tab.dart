@@ -903,6 +903,16 @@ class _AppearanceTabState extends State<AppearanceTab> {
             said: '${(theme.slidePanelOpacity * 100).round()}%',
             onChanged: (v) => set((a) => a.copyWith(slidePanelOpacity: v)),
           ),
+          _slider(
+            'Inactive window opacity',
+            value: theme.inactiveWindowOpacity,
+            min: kInactiveWindowOpacityMin,
+            max: kInactiveWindowOpacityMax,
+            divisions: 13,
+            said: '${(theme.inactiveWindowOpacity * 100).round()}%',
+            onChanged: (v) =>
+                set((a) => a.copyWith(inactiveWindowOpacity: v)),
+          ),
           _switch(
             'Dark window chrome',
             note: 'A colour scheme sets this to match itself',

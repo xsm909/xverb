@@ -15,6 +15,7 @@ import '../text_scale.dart';
 import 'context_menu.dart';
 import 'title_bar_plugins.dart';
 import 'hint.dart';
+import 'press_and_hold.dart' show kPressDevices;
 
 /// Our own title bar, replacing the system one.
 ///
@@ -174,6 +175,9 @@ class _TitleBarState extends State<TitleBar> with WindowListener {
   Widget _draggable({required Widget child, Key? key}) => GestureDetector(
         key: key ?? _dragArea,
         behavior: HitTestBehavior.translucent,
+        // Not the trackpad's scroll, which would move the window: see
+        // kPressDevices.
+        supportedDevices: kPressDevices,
         onPanStart: (_) => WindowService.startDragging(),
         onDoubleTap: WindowService.toggleMaximize,
         child: child,
@@ -582,9 +586,6 @@ class _MenuStripState extends State<_MenuStrip> {
   /// left: two selectors at once is two answers to "where am I".
   bool _menuHasHighlight = false;
 
-  /// Set when a hover asks to switch; acted on once the old menu has closed.
-  int? _pending;
-
   GlobalKey _keyFor(int index) => _keys.putIfAbsent(index, GlobalKey.new);
 
   /// Whether Alt is down right now, so the letters can be shown.
@@ -655,19 +656,20 @@ class _MenuStripState extends State<_MenuStrip> {
 
   /// The same letter, pressed while a menu is already open — item 82.
   ///
-  /// **It goes the way a hover does, and deliberately so.** Opening the next
-  /// menu directly would leave two `_show` calls in flight: the one being
-  /// closed finishes last and clears `_open`, so the menu that just opened
-  /// would be drawn with no title lit under it. The queue that the pointer
-  /// walking the row already uses has exactly this shape, and it is tested.
+  /// The next menu opens straight away and the old one closes under it, on
+  /// the same frames — see [showAppContextMenu]. The `_show` that is closing
+  /// finishes last, and clears `_open` only if it is still its own.
   ///
   /// The same letter again closes what is open, which is what a menu bar does
   /// everywhere.
   bool _switchByAccelerator(String accelerator) {
     final index = _indexFor(accelerator);
     if (index == null) return false;
-    if (index != _open) _pending = index;
-    Navigator.of(context).maybePop();
+    if (index == _open) {
+      Navigator.of(context).maybePop();
+    } else {
+      unawaited(_show(index));
+    }
     return true;
   }
 
@@ -738,16 +740,12 @@ class _MenuStripState extends State<_MenuStrip> {
       onPointerDown: widget.onPressOutside,
       onAccelerator: _switchByAccelerator,
     );
-    if (!mounted) return;
+    // Another title's menu may already be up in this one's place.
+    if (!mounted || _open != index) return;
     setState(() {
       _open = null;
       _menuHasHighlight = false;
     });
-
-    // Hovering a sibling closed this one and queued the next.
-    final next = _pending;
-    _pending = null;
-    if (next != null) await _show(next);
   }
 
   /// The open menu forwards every hover, including over its modal barrier,
@@ -755,7 +753,7 @@ class _MenuStripState extends State<_MenuStrip> {
   /// is up.
   void _onHoverWhileOpen(Offset position) {
     final current = _open;
-    if (current == null || _pending != null) return;
+    if (current == null) return;
 
     // Up to and including the overflow button, so walking the row reaches the
     // folded titles too. A title that is not on screen has no rectangle and is
@@ -764,8 +762,7 @@ class _MenuStripState extends State<_MenuStrip> {
       if (i == current) continue;
       final rect = _rectFor(i);
       if (rect != null && rect.contains(position)) {
-        _pending = i;
-        Navigator.of(context).maybePop();
+        unawaited(_show(i));
         return;
       }
     }

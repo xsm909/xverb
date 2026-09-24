@@ -32,11 +32,11 @@ one outright.
 ### One line, and nothing to unpack
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/xsm909/xverb-release/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/xsm909/xverb/main/tool/installer/install.sh | sh
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/xsm909/xverb-release/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/xsm909/xverb/main/tool/installer/install.ps1 | iex
 ```
 
 Piped into a shell there is no script on disk to look beside, so this goes
@@ -106,5 +106,5 @@ rather than a broken download; the installer clears the quarantine flag it was
 given, and the one-line install above never receives one. On Windows,
 SmartScreen warns about an unrecognised publisher.
 
-[releases]: https://github.com/xsm909/xverb-release
+[releases]: https://github.com/xsm909/xverb/releases
 [flutter]: https://docs.flutter.dev/get-started/install

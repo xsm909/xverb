@@ -24,6 +24,22 @@ import 'package:flutter/material.dart';
 /// Set on the detector rather than the callback, because that is where Flutter
 /// puts it: any detector mixing a hold with a mouse gesture has to be split in
 /// two so the mouse half keeps every device.
+/// **Everything that can press and drag — and not the trackpad's scroll.**
+///
+/// A drag recognizer takes the two-finger scroll on a Mac trackpad as a drag
+/// of its own, a `trackpad` pan, unless it is told which devices it serves. So
+/// the rows of a menu were carried by a plain scroll with nothing pressed,
+/// and anything else that listens for a drag would have been moved the same
+/// way. Every drag in the application takes this set. A click on the trackpad
+/// arrives as a mouse and is not affected.
+const Set<PointerDeviceKind> kPressDevices = <PointerDeviceKind>{
+  PointerDeviceKind.mouse,
+  PointerDeviceKind.touch,
+  PointerDeviceKind.stylus,
+  PointerDeviceKind.invertedStylus,
+  PointerDeviceKind.unknown,
+};
+
 const Set<PointerDeviceKind> kMenuHoldDevices = <PointerDeviceKind>{
   PointerDeviceKind.touch,
   PointerDeviceKind.stylus,

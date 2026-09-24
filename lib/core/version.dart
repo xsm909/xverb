@@ -27,7 +27,7 @@
 /// **Any published version is an update, D included.** The check compares all
 /// four parts numerically and is indifferent to which of them grew: a build
 /// that moves only D is offered exactly like one that moves C. That follows
-/// from who publishes and how — every archive in `xverb-release` is put there
+/// from who publishes and how — every archive on the Releases page is put there
 /// by hand, one at a time, so a build reaching anybody at all is already the
 /// decision that it should. A fix too small to move C can be the fix somebody
 /// is waiting for, and there is nothing else here to weigh it against.
@@ -47,7 +47,7 @@ const int kMinor = 1;
 const int kRelease = 0;
 
 /// D.
-const int kBuildNumber = 497;
+const int kBuildNumber = 500;
 
 /// A.B.C, which is what a release is called: the build is not part of the name.
 ///

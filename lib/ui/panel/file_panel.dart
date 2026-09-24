@@ -251,6 +251,9 @@ class FilePanel extends StatefulWidget {
   static const double historyClockWidth =
       _HistoryClockState.width + _HistoryClockState.gap;
 
+  /// How long the pointer rests on the clock before the history opens.
+  static const Duration historyClockRest = Duration(milliseconds: 160);
+
   @override
   State<FilePanel> createState() => _FilePanelState();
 }
@@ -1297,6 +1300,25 @@ class _PathBarState extends State<_PathBar> {
   }
 }
 
+/// Where the clock held by [key] stands once it is out, on the screen — also
+/// while it is put away at no width, because its right edge does not move.
+Rect? historyClockRect(GlobalKey key) {
+  final clock = key.currentContext?.findRenderObject() as RenderBox?;
+  if (clock == null || !clock.hasSize) return null;
+  final end = clock.localToGlobal(Offset(clock.size.width, 0));
+  return Rect.fromLTWH(
+    end.dx - FilePanel.historyClockWidth,
+    end.dy,
+    FilePanel.historyClockWidth,
+    clock.size.height,
+  );
+}
+
+/// Plays a press on the history clock held by [key] — for the history menu,
+/// which covers the clock with its barrier and takes the press itself.
+void pressHistoryClock(GlobalKey key, bool down) =>
+    (key.currentState as _HistoryClockState?)?._press(down);
+
 /// The clock at the end of a path bar, and the history under it.
 ///
 /// **Resting on it opens the history — no press.** It is the quick way back to
@@ -1327,7 +1349,7 @@ class _HistoryClock extends StatefulWidget {
 
 class _HistoryClockState extends State<_HistoryClock> {
   /// How long the pointer rests on the clock before the history opens.
-  static const Duration _rest = Duration(milliseconds: 160);
+  static const Duration _rest = FilePanel.historyClockRest;
 
   /// The clock's own width, and the gap between it and the trail.
   static const double width = 26;
@@ -1335,6 +1357,14 @@ class _HistoryClockState extends State<_HistoryClock> {
 
   bool _over = false;
   Timer? _resting;
+
+  /// Held down — by the pointer on the clock, or on it through the history
+  /// menu that hangs off it. See [pressHistoryClock].
+  bool _pressed = false;
+
+  void _press(bool down) {
+    if (mounted && _pressed != down) setState(() => _pressed = down);
+  }
 
   @override
   void didUpdateWidget(_HistoryClock old) {
@@ -1397,21 +1427,32 @@ class _HistoryClockState extends State<_HistoryClock> {
       },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: _open,
-        child: Container(
-          width: width,
-          height: theme.chromeRowHeight,
-          margin: const EdgeInsets.only(left: gap),
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: BorderRadius.circular(11),
-            border: Border.all(
-              color: lit
-                  ? theme.accentColor
-                  : theme.headerForeground.withValues(alpha: 0.12),
+        onTapDown: (_) => _press(true),
+        onTapCancel: () => _press(false),
+        onTap: () {
+          _press(false);
+          _open();
+        },
+        child: AnimatedScale(
+          // The press, played whether it opens the history or finds it open.
+          scale: _pressed ? 0.86 : 1,
+          duration: motionOf(context, kButtonAnimationDuration),
+          curve: kArrivingCurve,
+          child: Container(
+            width: width,
+            height: theme.chromeRowHeight,
+            margin: const EdgeInsets.only(left: gap),
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(
+                color: lit
+                    ? theme.accentColor
+                    : theme.headerForeground.withValues(alpha: 0.12),
+              ),
             ),
+            child: Icon(Icons.history, size: 15, color: foreground),
           ),
-          child: Icon(Icons.history, size: 15, color: foreground),
         ),
       ),
     );
@@ -2594,6 +2635,8 @@ class _ColumnGripState extends State<_ColumnGrip> {
       onExit: (_) => setState(() => _pointing = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        // Pulled by a hand, not by the trackpad's scroll: see kPressDevices.
+        supportedDevices: kPressDevices,
         onHorizontalDragStart: (_) => setState(() {
           _pulling = true;
           _from = widget.width;

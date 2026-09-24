@@ -22,7 +22,7 @@ const String kProjectUrl = 'https://github.com/xsm909/xverb';
 /// The same repository the updater reads — see `GithubReleaseSource`. So *What's
 /// new* opens the place the version somebody is running actually came from,
 /// rather than a page written separately and left behind.
-const String kReleasesUrl = 'https://github.com/xsm909/xverb-release';
+const String kReleasesUrl = 'https://github.com/xsm909/xverb/releases';
 
 // **There is deliberately no donate link.**
 //

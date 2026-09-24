@@ -78,7 +78,7 @@ $ErrorActionPreference = 'Stop'
 
 if (-not $Repo) {
     $Repo = if ($env:XVERB_RELEASE_REPO) { $env:XVERB_RELEASE_REPO }
-            else { 'xsm909/xverb-release' }
+            else { 'xsm909/xverb' }
 }
 
 # Windows PowerShell 5.1 still defaults to TLS 1.0 on some machines, and
@@ -198,9 +198,10 @@ function Get-DownloadsDirectory {
 # --- The release repository, as a fourth source ---------------------------
 #
 # There is no index to read and none to keep in step: a release is a set of
-# files in release/, versions are 1.0.n.x, and the newest release is simply the
-# largest one. Whoever publishes a release adds files; nothing else has to be
-# edited, so nothing else can be forgotten.
+# files attached to a GitHub release tagged v<version>, versions are 1.0.n.x,
+# and the newest release is simply the largest one. Whoever publishes a release
+# attaches files; nothing else has to be edited, so nothing else can be
+# forgotten.
 
 function Get-ReleaseNames {
     if ($From) {
@@ -208,11 +209,11 @@ function Get-ReleaseNames {
         return @(Get-ChildItem -Path $From -Filter 'xverb-*-windows-*.zip' -File |
             ForEach-Object { $_.Name })
     }
-    # The contents endpoint lists a directory without cloning it. A failure to
-    # reach it is deliberately not caught here: a repository that cannot be
-    # read must not be reported as a repository holding no release.
-    $listing = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/contents/release" -UseBasicParsing
-    return @($listing | ForEach-Object { $_.name } |
+    # The releases endpoint lists every release with the files attached to it.
+    # A failure to reach it is deliberately not caught here: a repository that
+    # cannot be read must not be reported as a repository holding no release.
+    $listing = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=100" -UseBasicParsing
+    return @($listing | ForEach-Object { $_.assets } | ForEach-Object { $_.name } |
         Where-Object { $_ -like 'xverb-*-windows-*.zip' })
 }
 
@@ -240,7 +241,7 @@ function Get-Release {
     $names = Get-ReleaseNames
     $name = Get-NewestReleaseName -Names $names
     if (-not $name) {
-        $where = if ($From) { $From } else { "https://github.com/$Repo/tree/main/release" }
+        $where = if ($From) { $From } else { "https://github.com/$Repo/releases" }
         throw "The release source holds nothing for windows. Looked in: $where"
     }
 
@@ -256,7 +257,8 @@ function Get-Release {
         if (-not (Test-Path $sourceSum)) { throw "No checksum beside $name in $From." }
         Copy-Item -Path $sourceSum -Destination $sumPath -Force
     } else {
-        $base = "https://raw.githubusercontent.com/$Repo/main/release"
+        # Each release is its own tag, and the tag is the version in the name.
+        $base = "https://github.com/$Repo/releases/download/v$(Get-ReleaseVersion -Name $name)"
         Write-Host "Fetching $name"
         Invoke-WebRequest -Uri "$base/$name" -OutFile $archivePath -UseBasicParsing
         try {
@@ -453,7 +455,7 @@ try {
     if ($Check) {
         $names = Get-ReleaseNames
         $name = Get-NewestReleaseName -Names $names
-        $where = if ($From) { $From } else { "https://github.com/$Repo/tree/main/release" }
+        $where = if ($From) { $From } else { "https://github.com/$Repo/releases" }
         if (-not $name) {
             Write-Host "No release for windows at $where."
             exit 1

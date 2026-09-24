@@ -268,6 +268,10 @@ extension PanelDensityMetrics on PanelDensity {
   };
 }
 
+/// The range [AppearanceSettings.inactiveWindowOpacity] is held to.
+const double kInactiveWindowOpacityMin = 0.25;
+const double kInactiveWindowOpacityMax = 0.9;
+
 /// Every colour and metric the panels draw with.
 ///
 /// The defaults are **Xverb Light**, the palette of the same name in
@@ -361,6 +365,7 @@ class AppearanceSettings {
     this.menuOpacity = 0.55,
     this.menuBlur = 45,
     this.slidePanelOpacity = 0.65,
+    this.inactiveWindowOpacity = 0.8,
     // On: the cursor is the accent itself here, a bright teal, and the name
     // on it reads in the paper's dark rather than in the pale ink beside it.
     this.invertCursorText = true,
@@ -860,6 +865,15 @@ class AppearanceSettings {
   /// surface in the application, set in one place.
   final double slidePanelOpacity;
 
+  /// How strongly the whole interface is drawn while another window has the
+  /// focus, between [kInactiveWindowOpacityMin] and [kInactiveWindowOpacityMax].
+  ///
+  /// The hint that the window is behind something. On macOS the backdrop stays
+  /// frosted without the focus, so the backdrop cannot say it. Never fully
+  /// solid, or there is no hint; never faint, or the window behind is
+  /// unreadable.
+  final double inactiveWindowOpacity;
+
   /// When true the row under the cursor is written in whatever contrasts with
   /// [cursorColor] instead of in its own colour.
   ///
@@ -1199,6 +1213,7 @@ class AppearanceSettings {
     bool? menuMonolith,
     double? menuOpacity,
     double? slidePanelOpacity,
+    double? inactiveWindowOpacity,
     double? menuBlur,
     bool? invertCursorText,
     Color? consoleBackground,
@@ -1257,6 +1272,8 @@ class AppearanceSettings {
       menuMonolith: menuMonolith ?? this.menuMonolith,
       menuOpacity: menuOpacity ?? this.menuOpacity,
       slidePanelOpacity: slidePanelOpacity ?? this.slidePanelOpacity,
+      inactiveWindowOpacity:
+          inactiveWindowOpacity ?? this.inactiveWindowOpacity,
       menuBlur: menuBlur ?? this.menuBlur,
       invertCursorText: invertCursorText ?? this.invertCursorText,
       consoleBackground: consoleBackground ?? this.consoleBackground,
@@ -1331,6 +1348,7 @@ class AppearanceSettings {
     'menuMonolith': menuMonolith,
     'menuOpacity': menuOpacity,
     'slidePanelOpacity': slidePanelOpacity,
+    'inactiveWindowOpacity': inactiveWindowOpacity,
     'menuBlur': menuBlur,
     'invertCursorText': invertCursorText,
     'consoleBackground': consoleBackground.toARGB32(),
@@ -1497,6 +1515,10 @@ class AppearanceSettings {
           (json['menuOpacity'] as num?)?.toDouble() ?? defaults.menuOpacity,
       slidePanelOpacity: (json['slidePanelOpacity'] as num?)?.toDouble() ??
           defaults.slidePanelOpacity,
+      inactiveWindowOpacity:
+          ((json['inactiveWindowOpacity'] as num?)?.toDouble() ??
+                  defaults.inactiveWindowOpacity)
+              .clamp(kInactiveWindowOpacityMin, kInactiveWindowOpacityMax),
       menuBlur: (json['menuBlur'] as num?)?.toDouble() ?? defaults.menuBlur,
       invertCursorText:
           json['invertCursorText'] as bool? ?? defaults.invertCursorText,

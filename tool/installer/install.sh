@@ -48,7 +48,7 @@ unpacked=
 downloaded=
 from=
 prefer_release=
-repo=${XVERB_RELEASE_REPO:-xsm909/xverb-release}
+repo=${XVERB_RELEASE_REPO:-xsm909/xverb}
 
 # Piped into sh there is no script file, so there is nothing beside it and the
 # only sensible source is the network. Told apart by whether $0 names a file:
@@ -161,9 +161,10 @@ newest_archive() {
 # --- The release repository, as a fourth source -------------------------
 #
 # There is no index to read and none to keep in step: a release is a set of
-# files in release/, versions are 1.0.n.x, and the newest release is simply the
-# largest one. Whoever publishes a release adds files; nothing else has to be
-# edited, so nothing else can be forgotten.
+# files attached to a GitHub release tagged v<version>, versions are 1.0.n.x,
+# and the newest release is simply the largest one. Whoever publishes a release
+# attaches files; nothing else has to be edited, so nothing else can be
+# forgotten.
 
 # curl on most machines, wget on the ones that have only that. Both are told to
 # fail on an HTTP error rather than saving the error page under the name of the
@@ -205,17 +206,18 @@ release_names() {
     done
     return 0
   fi
-  # The contents endpoint lists a directory without cloning it. Read for names
-  # only; anything else in the JSON is somebody else's business.
+  # The releases endpoint lists every release with the files attached to it.
+  # Read for the download URLs only, and only their last segment: the release
+  # titles, the uploader and the rest of the JSON are somebody else's business.
   #
   # Fetched whole first, so that a source that cannot be reached is told apart
   # from a source that holds no release. Piping straight into grep loses that
   # difference and reports a 404 repository as an empty one.
-  listing=$(fetch_to_stdout "https://api.github.com/repos/$repo/contents/release") ||
+  listing=$(fetch_to_stdout "https://api.github.com/repos/$repo/releases?per_page=100") ||
     return 2
   printf '%s\n' "$listing" |
-    grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' |
-    sed 's/.*"\([^"]*\)"$/\1/' |
+    grep -o '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*"' |
+    sed 's/.*\/\([^/"]*\)"$/\1/' |
     grep "^xverb-.*-$system-.*\.tar\.gz$" || true
   return 0
 }
@@ -261,10 +263,10 @@ fetch_release() {
 fetched. Download the archive yourself and pass it with --archive FILE."
   fi
   names=$(release_names) || die "Could not read the release listing at
-${from:-https://github.com/$repo/tree/main/release}."
+${from:-https://github.com/$repo/releases}."
   name=$(printf '%s\n' "$names" | newest_release_name)
   [ -n "$name" ] || die "The release source holds nothing for $system.
-Looked in: ${from:-https://github.com/$repo/tree/main/release}"
+Looked in: ${from:-https://github.com/$repo/releases}"
 
   downloaded=$(mktemp -d "${TMPDIR:-/tmp}/xverb-release.XXXXXX")
   if [ -n "$from" ]; then
@@ -272,7 +274,9 @@ Looked in: ${from:-https://github.com/$repo/tree/main/release}"
     [ -f "$from/$name.sha256" ] || die "No checksum beside $name in $from."
     cp "$from/$name.sha256" "$downloaded/$name.sha256"
   else
-    base="https://raw.githubusercontent.com/$repo/main/release"
+    # Each release is its own tag, and the tag is the version in the name.
+    version=$(printf '%s\n' "$name" | awk -F- '{print $2}')
+    base="https://github.com/$repo/releases/download/v$version"
     say "Fetching $name"
     fetch_to_file "$base/$name" "$downloaded/$name" ||
       die "Could not download $name."
@@ -549,7 +553,7 @@ if [ "$action" = check ]; then
 listing cannot be read."
   fi
   names=$(release_names) || die "Could not read the release listing at
-${from:-https://github.com/$repo/tree/main/release}."
+${from:-https://github.com/$repo/releases}."
   name=$(printf '%s\n' "$names" | newest_release_name)
   if [ -z "$name" ]; then
     say "No release for $system at ${from:-github.com/$repo}."
@@ -558,7 +562,7 @@ ${from:-https://github.com/$repo/tree/main/release}."
   version=$(printf '%s\n' "$name" | awk -F- '{print $2}')
   say "Newest release for $system: $version"
   say "  $name"
-  say "  from ${from:-https://github.com/$repo/tree/main/release}"
+  say "  from ${from:-https://github.com/$repo/releases}"
   exit 0
 fi
 

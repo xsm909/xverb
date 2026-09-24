@@ -190,6 +190,13 @@ const int kButtonAnimationDuration = 120;
 /// The disk map's rings re-arranging.
 const int kDiskMapAnimationDuration = 480;
 
+/// The whole window fading back when another window takes the focus, and
+/// coming forward again when it returns.
+///
+/// Quick: it is a hint about where the keyboard went, and a window still
+/// fading when the person is already typing into another reads as lag.
+const int kWindowFocusFadeDuration = 240;
+
 /// The four speeds the settings page offers, as multipliers on everything
 /// above. Off is not "very fast": at 0 nothing animates at all.
 const double kAnimationOff = 0;

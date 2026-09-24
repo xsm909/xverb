@@ -132,7 +132,8 @@ class UpdateCheckRowState extends State<UpdateCheckRow> {
 
   /// The line that installs the newest release, for the machine this is.
   static String get _installLine {
-    const base = 'https://raw.githubusercontent.com/xsm909/xverb-release/main';
+    const base =
+        'https://raw.githubusercontent.com/xsm909/xverb/main/tool/installer';
     return switch (currentPlatformName()) {
       'windows' => 'irm $base/install.ps1 | iex',
       _ => 'curl -fsSL $base/install.sh | sh',

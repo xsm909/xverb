@@ -431,12 +431,19 @@ class FolderHistory extends ChangeNotifier {
   /// Carries a folder [by] places up (negative) or down the list as it is
   /// shown, and holds it where it lands.
   ///
-  /// **A row put somewhere by hand is pinned there, and so is every row above
-  /// it.** The rest are ranked by time, so a row left unpinned where it was
-  /// put would be moved by the next minute of work somewhere else — and
-  /// pinning only that row would lift it over the rows it was dropped under.
+  /// **A row put somewhere by hand is pinned, and only that row.** The rest
+  /// are ranked by time, so a row left unpinned where it was put would be
+  /// moved by the next minute of work somewhere else. Pins lead the list, so a
+  /// row dropped under unpinned ones rises to the end of the pins rather than
+  /// staying where it fell.
+  ///
+  /// It used to pin every row above it as well, which kept it exactly where
+  /// it was dropped, and that was the trouble: one drag turned half the list
+  /// into pins nobody had asked for.
+  ///
   /// The one way back is the other direction: a pinned row carried below the
-  /// last pin is let go, and returns to its place by time.
+  /// last pin is let go, and returns to its place by time. Only that row: the
+  /// other pins stay.
   ///
   /// Clamped rather than refused: a row dragged past the end lands at the end,
   /// which is what dragging past the end means everywhere else.
@@ -456,7 +463,8 @@ class FolderHistory extends ChangeNotifier {
     final pins = _pinned.length;
     final List<String> held;
     if (!_pinned.contains(key)) {
-      held = order.take(to + 1 > pins + 1 ? to + 1 : pins + 1).toList();
+      if (!canPin) return;
+      held = list.take(pins).toList()..insert(to < pins ? to : pins, key);
     } else if (to < pins) {
       held = order.take(pins).toList();
     } else {

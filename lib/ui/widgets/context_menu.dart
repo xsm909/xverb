@@ -12,6 +12,7 @@ import '../../core/settings/appearance_settings.dart';
 import '../motion.dart';
 import 'blurred_backdrop.dart';
 import 'hint.dart';
+import 'press_and_hold.dart' show kPressDevices;
 import '../picture_filter.dart';
 
 /// How round a menu's corners are — and, since a title on the strip and the
@@ -302,6 +303,8 @@ Future<void> showAppContextMenu({
   ValueChanged<MenuItem?>? onRowHighlighted,
   ValueListenable<List<MenuNode>>? live,
   bool Function(String letter)? onAccelerator,
+  bool Function(LogicalKeyboardKey key)? onAltKey,
+  ValueChanged<bool>? onAnchorPress,
   bool joined = false,
   double gap = 0,
 }) {
@@ -310,14 +313,13 @@ Future<void> showAppContextMenu({
 
   final navigator = Navigator.of(context);
 
-  // Only ever one menu. A right-click while a menu is up does not always reach
-  // the barrier — a secondary press can go straight past it to the panel —
-  // and the second menu then opened on top of the first, which is what two
-  // stacked menus were.
-  final previous = _openMenu;
-  if (previous != null && previous.isActive) {
-    navigator.removeRoute(previous);
-  }
+  // **Only ever one menu, and the one going does not hold up the one coming.**
+  // A press outside a menu goes on to whatever is under it (see
+  // [_ContextMenuRoute.buildModalBarrier]), and if that opens a menu of its
+  // own, the old one is still on its way out. It is closed here, with its
+  // animation, and the new one unrolls over the same frames: one menu leaving
+  // and one arriving, never two to choose between and never a blink.
+  _openMenu?._close();
 
   final route = _ContextMenuRoute(
     // A pointer is just a rect with no size, so both cases share one path.
@@ -331,6 +333,8 @@ Future<void> showAppContextMenu({
     onRowHighlighted: onRowHighlighted,
     live: live,
     onAccelerator: onAccelerator,
+    onAltKey: onAltKey,
+    onAnchorPress: onAnchorPress,
     joined: joined,
     gap: gap,
     // Read where the menu is raised from, because a route has no settings of
@@ -351,6 +355,20 @@ Future<void> showAppContextMenu({
 /// The menu currently up, if any. There is at most one for the whole app, so
 /// this is deliberately a single slot rather than per-widget state.
 _ContextMenuRoute? _openMenu;
+
+/// Closes the menu that is up, if there is one, the way Escape closes it.
+///
+/// For whoever raised it and has decided the menu is now the wrong one — the
+/// history hanging off the other panel's clock, the drives of the other panel.
+/// The `await` on [showAppContextMenu] returns as it would on Escape, so the
+/// raiser's own clean-up runs before anything is opened in its place.
+void closeAppContextMenu() => _openMenu?._close();
+
+/// Whether a menu is up right now — for whoever raised one and is about to
+/// take the keyboard back once it has gone. If another menu has already come
+/// up in its place, the keyboard is that menu's, and taking it would leave a
+/// menu on screen that no key reaches.
+bool get appContextMenuOpen => _openMenu != null;
 
 /// Whether a menu is on screen right now.
 ///
@@ -374,6 +392,8 @@ class _ContextMenuRoute extends PopupRoute<void> {
     this.onRowHighlighted,
     this.live,
     this.onAccelerator,
+    this.onAltKey,
+    this.onAnchorPress,
     this.joined = false,
     this.gap = 0,
   });
@@ -429,6 +449,21 @@ class _ContextMenuRoute extends PopupRoute<void> {
   /// true means the letter was taken; the menu then leaves the press alone.
   final bool Function(String letter)? onAccelerator;
 
+  /// Any other key pressed with Alt while this menu is open — Alt+F1 and
+  /// Alt+F2, which the drive menu hands back so the other panel's can be
+  /// asked for without Escape first. Answering true means it was taken.
+  final bool Function(LogicalKeyboardKey key)? onAltKey;
+
+  /// **A press on the anchor leaves the menu open**, and is told here: true as
+  /// it goes down, false as it comes up.
+  ///
+  /// For a menu that opens on hover. The pointer is already on the button when
+  /// the menu comes out, and a press that lands a moment later is the same
+  /// intent arriving late — not a wish to close. Without this the press hit
+  /// the barrier, closed the menu, and the hover opened it again: a flicker
+  /// for a click. Null, and the anchor is barrier like everywhere else.
+  final ValueChanged<bool>? onAnchorPress;
+
   /// Whether the anchor is a title on the strip, to be taken into the same
   /// outline as the panel.
   final bool joined;
@@ -452,6 +487,35 @@ class _ContextMenuRoute extends PopupRoute<void> {
   @override
   Duration get transitionDuration => duration;
 
+  /// Closes this menu with its animation, if it is not already going.
+  void _close() {
+    final nav = navigator;
+    if (nav == null || !isActive) return;
+    if (isCurrent) {
+      nav.pop();
+    } else {
+      nav.removeRoute(this);
+    }
+  }
+
+  /// **The barrier lets everything through.**
+  ///
+  /// A press outside the menu closes it — and then goes on to whatever it
+  /// landed on, rather than being spent on the closing. So the history open
+  /// on one panel does not have to be dismissed before the Files menu can be
+  /// opened, or before the other panel's clock can be rested on: the old menu
+  /// fades out while the new one unrolls. The pointer is seen under it too,
+  /// so what it hovers lights, and the wheel scrolls the panels behind it as
+  /// it would anywhere on the Mac. Translucent and childless, it takes part in
+  /// the hit test without ever being the thing that was hit.
+  @override
+  Widget buildModalBarrier() => SizedBox.expand(
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => _close(),
+        ),
+      );
+
   @override
   Widget buildPage(
     BuildContext context,
@@ -469,6 +533,8 @@ class _ContextMenuRoute extends PopupRoute<void> {
       onRowHighlighted: onRowHighlighted,
       live: live,
       onAccelerator: onAccelerator,
+      onAltKey: onAltKey,
+      onAnchorPress: onAnchorPress,
       joined: joined,
       gap: gap,
     );
@@ -532,12 +598,20 @@ class _ContextMenuOverlay extends StatefulWidget {
     this.onRowHighlighted,
     this.live,
     this.onAccelerator,
+    this.onAltKey,
+    this.onAnchorPress,
   });
 
   final Rect anchor;
   final List<MenuNode> nodes;
   final String searchHint;
   final MenuAppearance style;
+
+  /// See [_ContextMenuRoute.onAnchorPress].
+  final ValueChanged<bool>? onAnchorPress;
+
+  /// See [_ContextMenuRoute.onAltKey].
+  final bool Function(LogicalKeyboardKey key)? onAltKey;
 
   /// Whether the anchor is a title on the menu strip, to be taken into the
   /// same outline. See [_MenuOutline].
@@ -604,7 +678,10 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
         ? _labelOf(level.nodes[level.highlighted])
         : null;
 
-    final fresh = _Level(nodes: rows, title: level.title, moves: level.moves);
+    // A move, as far as the rows are concerned: one that is the same object in
+    // a new place glides there from where it was drawn. See [_Level.moves].
+    final fresh =
+        _Level(nodes: rows, title: level.title, moves: level.moves + 1);
     if (was != null) {
       for (var i = 0; i < rows.length; i++) {
         if (_labelOf(rows[i]) == was) {
@@ -920,6 +997,10 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
     // stopped working when the layout was switched would be worse than one
     // that never answered Alt at all.
     if (keys.isAltPressed) {
+      final other = widget.onAltKey;
+      if (other != null && other(event.logicalKey)) {
+        return KeyEventResult.handled;
+      }
       final letter = bindingLetter(event);
       final ask = widget.onAccelerator;
       if (letter != null && ask != null && ask(letter)) {
@@ -1120,11 +1201,9 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
 
   /// Pins the row under the keyboard, or lets it go. Answers whether it could.
   ///
-  /// **The row is left where it is.** Pinning moves it in the list it came
-  /// from, and the list is rebuilt the next time the menu opens; moving it
-  /// under the hand while somebody is looking at it would take away the row
-  /// they were about to press. Only the pin changes, and the order settles on
-  /// the way back in.
+  /// Where the menu is [live], the row then goes where the list puts it —
+  /// among the pins, or back below them — and glides there. Without that the
+  /// pin alone changes, and the order settles the next time it opens.
   bool _pinHighlighted() {
     if (_levels.isEmpty) return false;
     final level = _levels.last;
@@ -1309,6 +1388,31 @@ class _ContextMenuOverlayState extends State<_ContextMenuOverlay> {
                     widget.onPointerHover?.call(event.position),
                 onPointerDown: (event) =>
                     widget.onPointerDown?.call(event.position),
+              ),
+            ),
+          // **The button the menu came from**, held above the barrier. A press
+          // on it closes the menu and stops there — it does not go on to open
+          // the same menu again, which is what passing it through would do. A
+          // menu that opened on a rest keeps itself open instead: see
+          // [_ContextMenuRoute.onAnchorPress].
+          if (!widget.anchor.isEmpty)
+            Positioned.fromRect(
+              rect: widget.anchor,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (_) {
+                    final press = widget.onAnchorPress;
+                    if (press != null) {
+                      press(true);
+                    } else {
+                      Navigator.of(context).maybePop();
+                    }
+                  },
+                  onPointerUp: (_) => widget.onAnchorPress?.call(false),
+                  onPointerCancel: (_) => widget.onAnchorPress?.call(false),
+                ),
               ),
             ),
           CustomSingleChildLayout(
@@ -2347,6 +2451,26 @@ class _SeparatorRow extends StatelessWidget {
   }
 }
 
+/// A row's pin or cross: its room held in every state, and the thing itself
+/// faded in and out of it. Not pressable while it is not shown.
+class _KeptPlace extends StatelessWidget {
+  const _KeptPlace({required this.shown, required this.child});
+
+  final bool shown;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+        ignoring: !shown,
+        child: AnimatedOpacity(
+          opacity: shown ? 1 : 0,
+          duration: motionOf(context, kButtonAnimationDuration),
+          curve: shown ? kArrivingCurve : kLeavingCurve,
+          child: child,
+        ),
+      );
+}
+
 /// A small control at the end of a row: the pin, or the cross.
 ///
 /// A hit target of its own, so pressing it is not pressing the row — going to a
@@ -2584,6 +2708,8 @@ class _ItemRowState extends State<_ItemRow>
         // spent proving itself — about eighteen points — and a row carried two
         // places arrived reporting one.
         dragStartBehavior: DragStartBehavior.down,
+        // Carried by a hand, never by the trackpad's scroll: see kPressDevices.
+        supportedDevices: kPressDevices,
         // **A tap and a drag on the same row, told apart by the arena.**
         // Nothing moves until the pointer has travelled the slop, so a press
         // that goes where it says still goes where it says — and a press that
@@ -2688,31 +2814,42 @@ class _ItemRowState extends State<_ItemRow>
               // so while nobody is touching it — that is the whole of what a
               // pin is for — and an empty pin on every row would be the column
               // of crosses again.
-              if (item.onPin != null && (pinned || _over || highlighted)) ...[
+              //
+              // **Both keep their place in every state** (backlog 150). The
+              // cross used to take room only when it came out, and the pin
+              // beside it moved sideways under a hand already on its way to
+              // it. The room is held whether or not they are drawn, and they
+              // fade in and out of it rather than arriving.
+              if (item.onPin != null) ...[
                 const SizedBox(width: 8),
-                _RowAction(
-                  icon: pinned ? Icons.push_pin : Icons.push_pin_outlined,
-                  ink: pinned ? style.accent : foreground,
-                  accent: style.accent,
-                  size: style.scaled(13),
-                  // Redrawn here as well as done: the pin is the only sign that
-                  // the press landed, and the list it reorders is not rebuilt
-                  // until the menu is opened again.
-                  onPressed: () {
-                    item.onPin!();
-                    widget.onPinned?.call();
-                    if (mounted) setState(() {});
-                  },
+                _KeptPlace(
+                  shown: pinned || _over || highlighted,
+                  child: _RowAction(
+                    icon: pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                    ink: pinned ? style.accent : foreground,
+                    accent: style.accent,
+                    size: style.scaled(13),
+                    // Redrawn here as well as done: in a menu that is not live
+                    // the pin is the only sign that the press landed.
+                    onPressed: () {
+                      item.onPin!();
+                      widget.onPinned?.call();
+                      if (mounted) setState(() {});
+                    },
+                  ),
                 ),
               ],
-              if (onRemove != null && (_over || highlighted)) ...[
+              if (onRemove != null) ...[
                 const SizedBox(width: 8),
-                _RowAction(
-                  icon: Icons.close,
-                  ink: foreground,
-                  accent: style.accent,
-                  size: style.scaled(13),
-                  onPressed: onRemove!,
+                _KeptPlace(
+                  shown: _over || highlighted,
+                  child: _RowAction(
+                    icon: Icons.close,
+                    ink: foreground,
+                    accent: style.accent,
+                    size: style.scaled(13),
+                    onPressed: onRemove!,
+                  ),
                 ),
               ],
               // The same arrow a shelf carries: whatever the row does when it

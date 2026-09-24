@@ -28,6 +28,7 @@ import '../../core/update/update_log.dart';
 import '../../core/update/updater_handoff.dart';
 import '../../core/update/updater_runner.dart';
 import '../../core/version.dart';
+import '../widgets/press_and_hold.dart' show kPressDevices;
 
 /// Sets up a small centred window and runs the update in it.
 Future<void> runUpdater({
@@ -245,6 +246,8 @@ class _UpdaterScreenState extends State<UpdaterScreen> {
     return Scaffold(
       body: GestureDetector(
         // The window has no title bar of its own, so it is dragged by its face.
+        // Not by the trackpad's scroll, though: see kPressDevices.
+        supportedDevices: kPressDevices,
         onPanStart: (_) => windowManager.startDragging(),
         child: Padding(
           padding: const EdgeInsets.all(24),

@@ -14,6 +14,7 @@ import 'core/settings/window_service.dart';
 import 'core/vfs/fs_registry.dart';
 import 'state/app_state.dart';
 import 'ui/commander_screen.dart';
+import 'ui/motion.dart';
 import 'ui/page_transition.dart';
 import 'ui/text_scale.dart';
 
@@ -36,6 +37,10 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
   /// Whether the window is filling the screen, and so wants square corners.
   /// See [_rounded].
   bool _maximized = false;
+
+  /// Whether this window has the focus. Starts true: the window is raised with
+  /// it, and a blur arrives if it is not.
+  final ValueNotifier<bool> _inFront = ValueNotifier(true);
 
   /// **The one place anything gets written on the way out.**
   ///
@@ -104,6 +109,7 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
     _lifecycle.dispose();
     widget.state.settings.removeListener(_onSettingsChanged);
     if (WindowService.isSupported) windowManager.removeListener(this);
+    _inFront.dispose();
     super.dispose();
   }
 
@@ -125,6 +131,7 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
   /// window manager it is the only one there is.
   @override
   void onWindowBlur() {
+    _inFront.value = false;
     widget.state.history.inFront(false);
     unawaited(widget.state.saveOnExit());
   }
@@ -273,6 +280,7 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
     // **Said before anything else here can decline to do it.** The rest of this
     // method is about the backdrop and gives up early on a drag; the history
     // and the drives are about being back, and being back has happened.
+    _inFront.value = true;
     widget.state.history.inFront(true);
     unawaited(widget.state.fileSystems.refreshRoots());
 
@@ -470,7 +478,19 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
                 appearance.uiWeightShift,
               ),
             ),
-            builder: (context, child) => _rounded(child),
+            // **A window behind another says so.** On macOS the backdrop now
+            // stays frosted without the focus, so the backdrop no longer tells
+            // the two states apart; the interface itself fades back instead.
+            builder: (context, child) => ValueListenableBuilder<bool>(
+              valueListenable: _inFront,
+              builder: (context, inFront, content) => AnimatedOpacity(
+                opacity: inFront ? 1 : appearance.inactiveWindowOpacity,
+                duration: appearance.animated(kWindowFocusFadeDuration),
+                curve: inFront ? kArrivingCurve : kLeavingCurve,
+                child: content,
+              ),
+              child: _rounded(child),
+            ),
             home: const CommanderScreen(),
           );
         },
