@@ -51,6 +51,9 @@ class SettingsStore extends ChangeNotifier {
   // photographs opened filling the window would go on hiding the 1:1 they
   // open at now. Everybody starts again from the new default, once.
   static const _kZoomMode = 'viewer.zoom.opens';
+  static const _kPageWidth = 'viewer.reading.page';
+  static const _kPaged = 'viewer.reading.paged';
+  static const _kLineSpacing = 'viewer.reading.spacing';
   static const _kSoundVolume = 'viewer.sound.volume';
   static const _kSoundSpectrum = 'viewer.sound.spectrum';
   static const _kUpdateStaying = 'update.staying';
@@ -442,6 +445,37 @@ class SettingsStore extends ChangeNotifier {
   /// photograph that way, and a mode that depended on which file you opened is
   /// one nobody can rely on.
   String? get viewerZoomMode => _prefs.getString(_kZoomMode);
+
+  /// Whether a document — a Word file, a book, a PDF read as text — is read
+  /// in a column the width of a book's page rather than the window's. On until
+  /// somebody turns it off; one for every document, and remembered, for the
+  /// same reason the zoom is.
+  bool get viewerPageWidth => _prefs.getBool(_kPageWidth) ?? true;
+
+  Future<void> setViewerPageWidth(bool on) async {
+    await _prefs.setBool(_kPageWidth, on);
+    notifyListeners();
+  }
+
+  /// Whether a document is read a page at a time, as a book reader does,
+  /// rather than scrolled. Off until somebody turns it on; one for every
+  /// document, and remembered.
+  bool get viewerPaged => _prefs.getBool(_kPaged) ?? false;
+
+  /// The line spacing a document is read at, as a word processor counts it:
+  /// 1 single, 1.5 one and a half, 2 double. One and a half until somebody
+  /// chooses another: a reading opens airy rather than set solid.
+  double get viewerLineSpacing => _prefs.getDouble(_kLineSpacing) ?? 1.5;
+
+  Future<void> setViewerLineSpacing(double spacing) async {
+    await _prefs.setDouble(_kLineSpacing, spacing);
+    notifyListeners();
+  }
+
+  Future<void> setViewerPaged(bool on) async {
+    await _prefs.setBool(_kPaged, on);
+    notifyListeners();
+  }
 
   Future<void> setViewerZoomMode(String name) async {
     await _prefs.setString(_kZoomMode, name);

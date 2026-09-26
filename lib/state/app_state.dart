@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../core/plugins/plugin_registry.dart';
+import '../core/reading/reading_store.dart';
 import '../core/settings/folder_history.dart';
 import '../core/settings/settings_store.dart';
 import '../core/settings/connection_store.dart';
@@ -98,6 +99,9 @@ class AppState extends ChangeNotifier {
   /// under History. Kept in memory and written on the way out; see
   /// [FolderHistory].
   FolderHistory history = FolderHistory.inMemory();
+
+  /// Where each document was left, and what was marked in it.
+  ReadingStore reading = ReadingStore.inMemory();
 
   /// What a plugin currently has filling the window as a page — views by view
   /// id, commands by command id.
@@ -293,6 +297,7 @@ class AppState extends ChangeNotifier {
     // Before the panels open anywhere, so the folder they start in is counted
     // like any other — it is the one somebody comes back to most.
     state.history = await FolderHistory.load();
+    state.reading = await ReadingStore.load();
 
     await state.left.openInitialLocation();
     await state.right.openInitialLocation();
@@ -342,7 +347,10 @@ class AppState extends ChangeNotifier {
   ///
   /// One call rather than a list at the call site, so the next thing that works
   /// this way is added here and not forgotten in `app.dart`.
-  Future<void> saveOnExit() => history.save();
+  Future<void> saveOnExit() async {
+    await history.save();
+    await reading.save();
+  }
 
   @override
   void dispose() {

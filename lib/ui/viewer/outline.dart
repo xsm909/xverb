@@ -913,6 +913,10 @@ String _pathOf(String text) {
 /// Fenced code is skipped, because a `#` inside a fence is a comment in
 /// somebody's shell script and not a heading — which is the one thing a
 /// line-at-a-time reading of markdown gets wrong.
+/// A backslash before ASCII punctuation, which Markdown reads as that
+/// character alone.
+final RegExp _escaped = RegExp(r'\\([!-/:-@\[-`{-~])');
+
 List<OutlineNode> markdownOutline(String source) {
   final lines = splitLines(source);
   final nodes = <OutlineNode>[];
@@ -942,7 +946,10 @@ List<OutlineNode> markdownOutline(String source) {
     if (match == null) continue;
 
     final level = match.group(1)!.length;
-    final title = _short(match.group(2)!);
+    // `\*` is an asterisk on the page, so it is one in the panel as well.
+    final title = _short(
+      match.group(2)!.replaceAllMapped(_escaped, (m) => m.group(1)!),
+    );
     if (title.isEmpty) continue;
     closeTo(level, i - 1);
     levels.add(level);

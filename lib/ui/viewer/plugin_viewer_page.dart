@@ -14,6 +14,9 @@ import '../../core/settings/settings_store.dart';
 import '../../core/vfs/failure_text.dart';
 import '../../core/vfs/file_entry.dart';
 import '../../state/app_state.dart';
+import 'document_memory.dart';
+import 'highlights_panel.dart';
+import 'note_editor.dart';
 import '../../state/listing_cursor.dart';
 import '../format.dart';
 import '../keyboard_focus.dart';
@@ -156,6 +159,71 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     _load();
   }
 
+  /// Whether what is on screen is a document read as text — what a viewer
+  /// that says it produces a `document` gives back: a Word file, a book, a
+  /// PDF. Only those are set in a book's page; a README or a program's source
+  /// is not something anybody reads like a book.
+  bool get _pageWidthOffered =>
+      _viewer.spec.produces == 'document' &&
+      _content?.kind == ViewerContentKind.markdown;
+
+  /// What is remembered about the document on screen — where it was left,
+  /// what is marked in it — made when a document is first shown and kept
+  /// while it is. Null for anything that is not a document.
+  DocumentMemory? _memory;
+  String? _memoryOf;
+
+  DocumentMemory? get _documentMemory {
+    if (!_pageWidthOffered) return null;
+    final key = _entry.path.toString();
+    if (_memoryOf != key) {
+      _memory?.dispose();
+      final store = context.read<AppState>().reading;
+      _memory = DocumentMemory(store, store.open(key, _entry.name, _entry.size));
+      _memoryOf = key;
+    }
+    return _memory;
+  }
+
+  /// The line spacings offered, as a word processor names them.
+  static const List<(double, String)> _spacings = [
+    (1.0, 'Single'),
+    (1.15, '1.15 lines'),
+    (1.5, '1.5 lines'),
+    (2.0, 'Double'),
+  ];
+
+  void _chooseSpacing(BuildContext anchor) {
+    final settings = context.read<SettingsStore>();
+    final box = anchor.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    unawaited(showAppContextMenu(
+      context: context,
+      anchorRect: rect,
+      nodes: [
+        for (var i = 0; i < _spacings.length; i++)
+          MenuItem(
+            tr(_spacings[i].$2),
+            checked: settings.viewerLineSpacing == _spacings[i].$1,
+            accelerator: '${i + 1}',
+            onSelected: () =>
+                unawaited(settings.setViewerLineSpacing(_spacings[i].$1)),
+          ),
+      ],
+    ));
+  }
+
+  void _togglePaged() {
+    final settings = context.read<SettingsStore>();
+    unawaited(settings.setViewerPaged(!settings.viewerPaged));
+  }
+
+  void _togglePageWidth() {
+    final settings = context.read<SettingsStore>();
+    unawaited(settings.setViewerPageWidth(!settings.viewerPageWidth));
+  }
+
   /// Whether what is on screen is something a structure can be read out of —
   /// the button is offered only there.
   bool get _readableContent => switch (_content?.kind) {
@@ -197,6 +265,7 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     _thumbnails.dispose();
     _stripHeight.dispose();
     _slow?.cancel();
+    _memory?.dispose();
     super.dispose();
   }
 
@@ -398,6 +467,9 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     if (keys.isControlPressed || keys.isMetaPressed || keys.isAltPressed) {
       return KeyEventResult.ignored;
     }
+    // A letter typed into a field — a note being written over the page — is
+    // the field's, not a key for the page.
+    if (keyboardIsInAField()) return KeyEventResult.ignored;
 
     // The strip itself, which is otherwise a button and nothing else — and a
     // control the keyboard cannot reach does not exist.
@@ -408,6 +480,27 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     // changed. See
     // [layoutIndependentLetter], which the menus and the drive list already
     // answer this way.
+    // The page's width, by the same rule as the strip: a key by its place on
+    // the board, and offered only where there is a document to set.
+    if (layoutIndependentLetter(event.physicalKey) == 'w' &&
+        _pageWidthOffered &&
+        !context.read<SettingsStore>().viewerPaged) {
+      _togglePageWidth();
+      return KeyEventResult.handled;
+    }
+    if (layoutIndependentLetter(event.physicalKey) == 'l' && _pageWidthOffered) {
+      // The next spacing along, round to the first after the last.
+      final settings = context.read<SettingsStore>();
+      final at = _spacings.indexWhere((s) => s.$1 == settings.viewerLineSpacing);
+      unawaited(settings.setViewerLineSpacing(
+        _spacings[(at + 1) % _spacings.length].$1,
+      ));
+      return KeyEventResult.handled;
+    }
+    if (layoutIndependentLetter(event.physicalKey) == 'p' && _pageWidthOffered) {
+      _togglePaged();
+      return KeyEventResult.handled;
+    }
     if (layoutIndependentLetter(event.physicalKey) == 't' &&
         _neighbours.length > 1) {
       _toggleStrip();
@@ -508,6 +601,36 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                         : '${_describer?.title ?? tr('About this file')}'
                             '  O',
                     onPressed: _structure.toggle,
+                  ),
+                // A book's page or the window's width, for a document. The
+                // icon says what a press will do: a narrow page offers to
+                // widen, a wide one to narrow.
+                // Pages or a scroll: a book reader's way, or a document's.
+                if (_pageWidthOffered)
+                  TitleBarButton(
+                    icon: Icons.auto_stories_outlined,
+                    tooltip: '${tr('Pages')}  P',
+                    on: settings.viewerPaged,
+                    onPressed: _togglePaged,
+                  ),
+                // The line spacing a document is read at.
+                if (_pageWidthOffered)
+                  Builder(
+                    builder: (anchor) => TitleBarButton(
+                      icon: Icons.format_line_spacing,
+                      tooltip: '${tr('Line spacing')}  L',
+                      onPressed: () => _chooseSpacing(anchor),
+                    ),
+                  ),
+                // The width only means something while scrolling: a page is
+                // already as wide as a page.
+                if (_pageWidthOffered && !settings.viewerPaged)
+                  TitleBarButton(
+                    icon: settings.viewerPageWidth
+                        ? Icons.width_wide_outlined
+                        : Icons.width_normal_outlined,
+                    tooltip: '${tr('Page width')}  W',
+                    onPressed: _togglePageWidth,
                   ),
                 // The strip, for the hand that reached for the mouse. Offered
                 // only where there is more than one file to walk, because a
@@ -621,6 +744,17 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                                         pluginId: _viewer.pluginId,
                                         structure: _structure,
                                         facts: _describer,
+                                        measure: _pageWidthOffered &&
+                                                settings.viewerPageWidth
+                                            ? kBookMeasure
+                                            : null,
+                                        memory: _documentMemory,
+                                        paged: _pageWidthOffered &&
+                                            settings.viewerPaged,
+                                        lineHeight: _pageWidthOffered
+                                            ? lineHeightFor(
+                                                settings.viewerLineSpacing)
+                                            : kDefaultLineHeight,
                                       ),
                                     ),
                                   ),
@@ -818,9 +952,27 @@ class PluginContentView extends StatefulWidget {
     this.reading,
     this.structure,
     this.facts,
+    this.measure,
+    this.memory,
+    this.paged = false,
+    this.lineHeight = kDefaultLineHeight,
   });
 
   final ViewerContent content;
+
+  /// How tall a line of body text is — see [MarkdownView.lineHeight].
+  final double lineHeight;
+
+  /// A document read a page at a time — see [MarkdownView.paged].
+  final bool paged;
+
+  /// Where a document was left and what is marked in it — see
+  /// [MarkdownView.memory].
+  final DocumentMemory? memory;
+
+  /// How wide a document's lines may be — see [MarkdownView.measure]. Null
+  /// for the whole width, which is also what everything but a document gets.
+  final double? measure;
 
   /// Who to ask what this file says about itself, and what to call the panel
   /// while it is showing it. Null where nothing can say anything.
@@ -1230,19 +1382,42 @@ class _PluginContentViewState extends State<PluginContentView> {
                 },
                 onClose: _closePanel,
               )
-            : StructurePanel(
-                nodes: _built(),
-                link: _reading,
-                focusNode: _tree,
-                truncated: widget.content.truncated,
-                onLeave: () {
-                  _leaveTree();
-                  _readingTouched();
-                },
-                onClose: _closePanel,
+            : _withMarks(
+                StructurePanel(
+                  nodes: _built(),
+                  link: _reading,
+                  focusNode: _tree,
+                  truncated: widget.content.truncated,
+                  onLeave: () {
+                    _leaveTree();
+                    _readingTouched();
+                  },
+                  onClose: _closePanel,
+                ),
               ),
         child: drawn,
       ),
+    );
+  }
+
+  /// The contents with what is marked beside them, for a document somebody
+  /// can mark; the contents alone for anything else.
+  Widget _withMarks(Widget contents) {
+    final memory = widget.memory;
+    if (memory == null) return contents;
+    return ReadingTabs(
+      contents: contents,
+      memory: memory,
+      link: _reading,
+      focusNode: _tree,
+      onNote: (highlight) async {
+        final note = await promptForNote(
+          context,
+          passage: highlight.text,
+          initialValue: highlight.note,
+        );
+        if (note != null) memory.replace(highlight.copyWith(note: note.trim()));
+      },
     );
   }
 
@@ -1293,10 +1468,18 @@ class _PluginContentViewState extends State<PluginContentView> {
       case ViewerContentKind.markdown:
         return KeyboardScrollable(
           hasKeyboard: _readingTakesKeys(part),
+          // A book read in pages answers the arrows by turning them.
+          before: (event) =>
+              _reading.keys?.call(event) ?? KeyEventResult.ignored,
           builder: (controller) => MarkdownView(
             source: content.text ?? '',
             controller: controller,
             link: _reading,
+            pictures: content.pictures,
+            measure: widget.measure,
+            memory: widget.memory,
+            paged: widget.paged,
+            lineHeight: widget.lineHeight,
           ),
         );
 

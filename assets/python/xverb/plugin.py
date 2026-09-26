@@ -24,13 +24,14 @@ import json
 import os
 import sys
 from collections import OrderedDict
-from typing import Callable, Dict, List, Optional, Sequence
+import struct
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from .fs import FileSystem
 from .rpc import RpcError, RpcPeer
 
 #: Protocol version this SDK speaks. Must match the host's.
-API_VERSION = 1
+API_VERSION = 2
 
 
 def text(body: str, language: Optional[str] = None, truncated: bool = False) -> dict:
@@ -50,6 +51,88 @@ def markdown(body: str, truncated: bool = False) -> dict:
     :func:`table` when the answer has sections rather than columns.
     """
     return {"kind": "markdown", "text": body, "truncated": truncated}
+
+
+def picture_size(data: bytes) -> Optional[Tuple[int, int]]:
+    """Width and height in pixels of a PNG, JPEG, GIF, WebP or BMP, read from
+    its first bytes, or None for anything else.
+
+    What :class:`Picture` asks when it is handed bytes and no size: the host
+    keeps the room for a picture from the first frame only if it knows how
+    big the picture is.
+    """
+    try:
+        if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
+            return struct.unpack(">II", data[16:24])
+        if data[:6] in (b"GIF87a", b"GIF89a"):
+            return struct.unpack("<HH", data[6:10])
+        if data[:2] == b"BM" and len(data) >= 26:
+            width, height = struct.unpack("<ii", data[18:26])
+            return width, abs(height)
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            chunk = data[12:16]
+            if chunk == b"VP8 ":
+                width, height = struct.unpack("<HH", data[26:30])
+                return width & 0x3FFF, height & 0x3FFF
+            if chunk == b"VP8L":
+                bits = int.from_bytes(data[21:25], "little")
+                return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+            if chunk == b"VP8X":
+                width = int.from_bytes(data[24:27], "little") + 1
+                height = int.from_bytes(data[27:30], "little") + 1
+                return width, height
+            return None
+        if data[:2] == b"\xff\xd8":
+            # The frame header is somewhere among the segments; walk them.
+            at = 2
+            while at + 9 < len(data):
+                if data[at] != 0xFF:
+                    return None
+                marker = data[at + 1]
+                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                    at += 2
+                    continue
+                length = struct.unpack(">H", data[at + 2:at + 4])[0]
+                if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                    height, width = struct.unpack(">HH", data[at + 5:at + 9])
+                    return width, height
+                at += 2 + length
+    except (struct.error, IndexError):
+        return None
+    return None
+
+
+class Picture:
+    """One picture of a document handed to :meth:`Plugin.document`.
+
+    ``data`` is the bytes, or a function giving them — called only when the
+    reader scrolls to the picture, so a book of two hundred illustrations
+    costs nothing for the ones never looked at. Give ``width`` and ``height``
+    in pixels when they are known without reading the picture; handed bytes,
+    the size is read from them. A picture of unknown size is still shown, but
+    the text under it moves when it arrives.
+
+    The host draws what its own decoder reads — PNG, JPEG, GIF, WebP, BMP.
+    Anything else is shown by its caption.
+    """
+
+    def __init__(
+        self,
+        data: Union[bytes, Callable[[], Optional[bytes]]],
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+    ):
+        self.data = data
+        if (width is None or height is None) and isinstance(data, (bytes, bytearray)):
+            found = picture_size(bytes(data))
+            if found is not None:
+                width, height = found
+        self.width = width
+        self.height = height
+
+    def read(self) -> Optional[bytes]:
+        data = self.data
+        return bytes(data) if isinstance(data, (bytes, bytearray)) else data()
 
 
 def fact(label: str, value: object, wide: bool = False) -> dict:
@@ -1268,6 +1351,8 @@ class Plugin:
         self._strings: Dict[str, str] = {}
         self._books: "OrderedDict[str, dict]" = OrderedDict()
         self._next_book = 0
+        self._documents: "OrderedDict[str, Mapping[str, Picture]]" = OrderedDict()
+        self._next_document = 0
         self._register_methods()
 
     # -- contributions -----------------------------------------------------
@@ -1657,6 +1742,63 @@ class Plugin:
     #: say when it has stopped looking — so the oldest are let go.
     KEEP_WORKBOOKS = 8
 
+    #: How many documents' pictures are kept to be asked for. One more
+    #: opened lets the oldest go; a reading that old asking for a picture
+    #: is shown the picture's caption.
+    KEEP_DOCUMENTS = 8
+
+    def document(
+        self,
+        body: str,
+        pictures: Optional[Mapping[str, Picture]] = None,
+        truncated: bool = False,
+    ) -> dict:
+        """Markdown, with pictures the host asks for as they are scrolled to.
+
+        The text names each picture by its key, on a line of its own::
+
+            ![The harbour at dawn](picture:p7)
+
+        and ``pictures`` maps the key — ``p7`` — to a :class:`Picture`. The
+        host keeps the room for each picture from the first frame and asks
+        for its bytes when the reader comes near it; only those cross the
+        pipe. A picture inside a sentence, one not in ``pictures``, or one
+        the host cannot decode is shown by its caption. An older host shows
+        every one by its caption and the text as it is.
+        """
+        content = markdown(body, truncated)
+        if not pictures:
+            return content
+        self._next_document += 1
+        handle = "doc-%d" % self._next_document
+        self._documents[handle] = dict(pictures)
+        while len(self._documents) > self.KEEP_DOCUMENTS:
+            self._documents.popitem(last=False)
+        content["pictures"] = {
+            "handle": handle,
+            "ids": [str(key) for key in pictures],
+            "sizes": {
+                str(key): [p.width, p.height]
+                for key, p in pictures.items()
+                if p.width and p.height
+            },
+        }
+        return content
+
+    def _document_picture(self, params: dict) -> dict:
+        handle = str(params.get("handle") or "")
+        found = self._documents.get(handle)
+        if found is None:
+            raise RpcError("This document is no longer open here. Open the file again.")
+        self._documents.move_to_end(handle)
+        picture = found.get(str(params.get("id") or ""))
+        if picture is None:
+            raise RpcError("The document has no such picture.")
+        data = picture.read()
+        if not data:
+            raise RpcError("The picture could not be read.")
+        return {"data": base64.b64encode(data).decode("ascii")}
+
     #: Rows sent with the answer that opens a sheet; the rest are asked for.
     FIRST_ROWS = 256
 
@@ -1852,6 +1994,7 @@ class Plugin:
         peer.register("sheet.press", self._sheet_press)
         peer.register("sheet.select", self._sheet_select)
         peer.register("sheet.activate", self._sheet_activate)
+        peer.register("document.picture", self._document_picture)
         peer.register("fs.roots", self._fs_roots)
         peer.register("fs.defaultLocation", self._fs_default_location)
         peer.register("fs.list", self._fs_list)

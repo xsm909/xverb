@@ -141,6 +141,35 @@ const int kChipSpreadDuration = 180;
 /// pointer reads as the page being slow rather than as the page answering.
 const int kMarkdownHoverDuration = 120;
 
+/// How long a picture in a document takes to arrive once its bytes have.
+///
+/// The room for it was kept from the start, so nothing around it moves: what
+/// happens is only that the plain ground held in its place gives way to the
+/// picture. Short — it is the page catching up with the reader, not an event.
+const int kPictureArrivalDuration = 200;
+
+/// How long a reading takes to narrow to a page, or widen to the window.
+///
+/// The column moves as a whole, both margins at once, so the eye sees one
+/// thing change its width rather than the text rewrapping in a jump.
+const int kReadingMeasureDuration = 260;
+
+/// How long a page takes to turn: the spread going slides a little the way
+/// the book is being read and fades, the next arrives from the other side.
+const int kPageTurnDuration = 340;
+
+/// How far a turning spread travels, as a share of its own width: far enough
+/// to be seen as a page going one way and the next coming from the other,
+/// not so far that the eye loses the text it was on.
+const double kPageTurnTravel = 0.35;
+
+/// How long the reading takes to go from a scroll to pages and back: the one
+/// fading and settling back as the other rises into its place.
+const int kReadingModeDuration = 320;
+
+/// How long a switch on the title bar takes to show that it is on or off.
+const int kTitleToggleDuration = 160;
+
 /// How long a hint takes to arrive once the pointer has waited for it.
 ///
 /// The waiting is not animation and is not here — it is a pause, and a pause

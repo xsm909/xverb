@@ -1,4 +1,6 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' show KeyEventResult;
 
 /// The line between a reading and whatever is standing beside it.
 ///
@@ -33,9 +35,21 @@ class ReadingLink extends ChangeNotifier {
   /// which is the honest answer while a file is still being read.
   void goTo(int line) => reveal?.call(line);
 
+  /// Where the reading takes itself to a marked passage, by the mark's id —
+  /// set by the reading, which alone knows where the mark lies now.
+  void Function(String id)? revealMark;
+
+  void goToMark(String id) => revealMark?.call(id);
+
+  /// Keys the reading answers itself before they are scrolled with — set
+  /// while a document is read a page at a time.
+  KeyEventResult Function(KeyEvent event)? keys;
+
   @override
   void dispose() {
     reveal = null;
+    revealMark = null;
+    keys = null;
     super.dispose();
   }
 }

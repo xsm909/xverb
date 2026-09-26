@@ -4,9 +4,10 @@
 /// **A — the contract with plugins.** It moves when, and only when, the
 /// host/plugin protocol breaks. It is deliberately *not* "a big release": a
 /// rewrite that leaves the protocol alone leaves A alone, and a protocol break
-/// too small to feel like a major release moves it anyway. [kMajor] is the
-/// number, and `kPluginApiVersion` is derived from it, so a plugin declaring
-/// `apiVersion: 1` runs on every `1.*.*.*` and on nothing else.
+/// too small to feel like a major release moves it anyway. What a plugin
+/// declares is not A but the plugin API *level* (`kPluginApiVersion`), which
+/// grows whenever the SDK gains something; a move of A is what retires the old
+/// levels, by raising `kPluginApiOldest`.
 ///
 /// **B — something is in the program that was not there before.** Not better,
 /// not fixed, not repainted: absent, then present, with somewhere for the
@@ -33,11 +34,7 @@
 /// is waiting for, and there is nothing else here to weigh it against.
 library;
 
-/// A, on its own, so that the plugin API version cannot drift away from it.
-///
-/// `kPluginApiVersion` in `core/plugins/plugin_manifest.dart` is this constant
-/// rather than a second `1` written beside it. The two say the same thing, and
-/// two places saying the same thing is a promise to remember; one place is not.
+/// A, on its own.
 const int kMajor = 1;
 
 /// B.
@@ -47,7 +44,7 @@ const int kMinor = 1;
 const int kRelease = 0;
 
 /// D.
-const int kBuildNumber = 500;
+const int kBuildNumber = 506;
 
 /// A.B.C, which is what a release is called: the build is not part of the name.
 ///

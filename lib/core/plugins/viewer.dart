@@ -6,6 +6,7 @@ import '../sheet/plugin_sheet_source.dart';
 import '../sheet/sheet_source.dart';
 import '../vfs/file_entry.dart';
 import '../vfs/vfs_path.dart';
+import 'document_pictures.dart';
 import 'facts.dart';
 import 'graph.dart';
 import 'plugin_manifest.dart';
@@ -1155,6 +1156,7 @@ class ViewerContent {
     this.truncated = false,
     this.cursor = -1,
     this.sheet,
+    this.pictures,
   });
 
   /// [call] is how a sheet asks its plugin for more rows. Content that does
@@ -1247,6 +1249,11 @@ class ViewerContent {
       detail: json['detail'] as String?,
       message: json['message'] as String?,
       truncated: json['truncated'] as bool? ?? false,
+      // A document's pictures are fetched as they are scrolled to, over the
+      // same pipe a sheet asks for rows on.
+      pictures: kind == ViewerContentKind.markdown && json['pictures'] is Map
+          ? PluginPictures(Map<String, dynamic>.from(json['pictures'] as Map), call)
+          : null,
     );
   }
 
@@ -1343,6 +1350,10 @@ class ViewerContent {
   /// Where a [ViewerContentKind.sheet] gets its rows. A source, not the rows:
   /// a sheet is read a screen at a time, and the content is only the door.
   final SheetSource? sheet;
+
+  /// Where the pictures of a [ViewerContentKind.markdown] come from, or null
+  /// for a document that names none of its own. See [DocumentPictures].
+  final DocumentPictures? pictures;
 
   /// Which row a table's cursor should be on, or -1 to leave it alone.
   ///

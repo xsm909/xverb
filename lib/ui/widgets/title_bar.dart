@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../motion.dart';
 import '../../core/i18n/i18n.dart';
 import '../../core/platform/modifier_keys.dart';
 import '../../core/settings/appearance_settings.dart';
@@ -89,25 +90,52 @@ class TitleBarButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onPressed,
+    this.on,
   });
 
   final IconData icon;
   final String tooltip;
 
+  /// A button that is a switch says whether it is on with the accent under
+  /// the same icon, as a toolbar's toggles do on a Mac — rather than trading
+  /// its icon for another one nobody recognises as the same button. Null for
+  /// a button that is only ever pressed.
+  final bool? on;
+
   /// Null disables the button, the way it does for any [IconButton].
   final VoidCallback? onPressed;
 
   @override
-  Widget build(BuildContext context) => Hint(
-    message: tooltip,
-    child: IconButton(
+  Widget build(BuildContext context) {
+    final appearance = context.watch<SettingsStore>().appearance;
+    final accent = appearance.accentColor;
+    // On a switch that is on, the icon is drawn in whatever reads on the
+    // accent — white on a dark one, black on a light one.
+    final ink = on == true
+        ? (accent.computeLuminance() > 0.5 ? Colors.black : Colors.white)
+        : appearance.headerForeground;
+    final button = IconButton(
       iconSize: 16,
       visualDensity: VisualDensity.compact,
-      color: context.watch<SettingsStore>().appearance.headerForeground,
+      color: ink,
       icon: Icon(icon),
       onPressed: onPressed,
-    ),
-  );
+    );
+    return Hint(
+      message: tooltip,
+      child: on == null
+          ? button
+          : AnimatedContainer(
+              duration: motionOf(context, kTitleToggleDuration),
+              curve: kArrivingCurve,
+              decoration: BoxDecoration(
+                color: on! ? accent : accent.withValues(alpha: 0),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: button,
+            ),
+    );
+  }
 }
 
 class _TitleBarState extends State<TitleBar> with WindowListener {

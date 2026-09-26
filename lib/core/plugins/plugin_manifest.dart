@@ -7,21 +7,31 @@ import '../i18n/plugin_strings.dart' as strings;
 import 'package:path/path.dart' as p;
 
 import '../i18n/i18n.dart';
-import '../version.dart';
 import 'grammar.dart';
 
-/// API contract version understood by this build of xverb.
+/// The plugin API level this build of xverb speaks.
 ///
-/// Plugins declare the version they were written against and are refused if it
-/// does not match. It is the host's **major version** and not a number of its
-/// own: a plugin declaring `apiVersion: 1` runs on every xverb `1.*.*.*`, and
-/// the way to say "the protocol has broken" is to move the major. That is what
-/// the major is *for* — see the head of `core/version.dart`.
+/// **A level, not the major version.** It grows by one whenever the SDK gains
+/// something a plugin may come to depend on — a new call, a new kind of
+/// content — and a plugin that uses it declares the new level. An older
+/// application then shows that plugin greyed, with its Install turned off and
+/// the reason written beside it, instead of installing something that cannot
+/// start. That works on every copy already out there, because they all refuse
+/// an `apiVersion` they do not speak; a new manifest field would have been
+/// read by nobody who needs it.
 ///
-/// Derived rather than written out a second time, deliberately: the two were
-/// independent constants in two files, kept level by nothing but the intention
-/// to remember.
-const int kPluginApiVersion = kMajor;
+/// Growing the level breaks nothing: a plugin declaring an older one runs as
+/// it always did, down to [kPluginApiOldest]. What *breaks* plugins is a move
+/// of the major, which raises [kPluginApiOldest] with it — see the head of
+/// `core/version.dart`.
+///
+/// Level 2 (1.1.0.502): `plugin.document` and a document's pictures, and the
+/// reader's backslash escapes.
+const int kPluginApiVersion = 2;
+
+/// The oldest plugin API level this build still runs. Level 1 is everything
+/// written for Xverb 1 before levels were counted.
+const int kPluginApiOldest = 1;
 
 /// A command a plugin contributes to the command palette and key bindings.
 class PluginCommandSpec {
@@ -1059,7 +1069,8 @@ class PluginManifest {
 
   String get entryPath => p.join(directory, entry);
 
-  bool get isCompatible => apiVersion == kPluginApiVersion;
+  bool get isCompatible =>
+      apiVersion >= kPluginApiOldest && apiVersion <= kPluginApiVersion;
 
   /// Declarative plugins need no interpreter and no child process.
   bool get needsPythonRuntime => runtime == PluginRuntime.python;

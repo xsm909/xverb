@@ -159,16 +159,26 @@ something to say about itself: `{"scheme": "git", "writable": false, "icon":
 and what the running plugin reports from `initialize` says the same thing, from
 the `writable` and `icon` attributes on the `FileSystem` class.
 
-`apiVersion` **is the host's major version** — the first number of `A.B.C.D`. A
-plugin declaring `apiVersion: 1` runs on every Xverb `1.x`, whatever the other
-three parts say, and on no other major. It must match exactly; a mismatch is
-refused rather than guessed at.
+`apiVersion` **is the plugin API level the plugin needs.** It grows by one
+whenever the SDK gains something a plugin may depend on, and an application
+runs every plugin whose level is between the oldest it still supports and its
+own. Declare the lowest level that has everything you use:
 
-That is the whole of the compatibility promise, and it is the reason the major
-moves: it changes when the host/plugin protocol breaks, and at no other time. A
-release that adds features without touching the protocol moves the second
-number, so nothing you have written stops working. When the first number moves,
-assume it does. `platforms` may be omitted to mean "all". The `schemes`, `viewers`,
+| level | since | what it added |
+| --- | --- | --- |
+| 1 | 1.0 | everything before levels were counted |
+| 2 | 1.1.0.502 | `plugin.document` and a document's pictures; backslash escapes in Markdown |
+
+A plugin declaring a level the application does not speak yet is listed greyed
+in the plugin manager, with its Install turned off and the reason beside it —
+never installed to fail at its first start. That is why a new capability is a
+new level rather than a field of its own: every copy of the application already
+out there refuses a level it does not know, and none of them would read a new
+field.
+
+Growing the level breaks nothing you have written. What does is a move of the
+first number of `A.B.C.D`, which happens only when the host/plugin protocol
+breaks, and retires the old levels with it. `platforms` may be omitted to mean "all". The `schemes`, `viewers`,
 `describers`, `views` and `commands` in the manifest are a declaration for the
 plugin manager
 — what actually gets registered is what the plugin reports from `initialize`, so
@@ -526,6 +536,40 @@ def list_archive(url):
 
 plugin.run()
 ```
+
+### Pictures in a document
+
+A book or a Word file is text with pictures in it, and Markdown alone would show
+each picture as its caption. `plugin.document` is Markdown whose pictures the
+host asks for as the reader scrolls to them:
+
+```python
+from xverb import Picture
+
+@plugin.viewer("books.epub", "Book", extensions=["epub"], produces="document")
+def book(url):
+    body = "# Chapter one\n\n![The harbour at dawn](picture:p7)\n\nIt was early."
+    return plugin.document(body, {"p7": Picture(lambda: read_image(url, 7))})
+```
+
+A picture is named on a line of its own as `![caption](picture:key)`; the key is
+the plugin's to choose. `Picture(data, width, height)` takes the bytes or a
+function giving them — called only when the picture is reached — and the size in
+pixels where it is known without reading the picture; handed bytes, the size is
+read from them with `picture_size`, which knows PNG, JPEG, GIF, WebP and BMP.
+
+**Give the size whenever there is one.** With it the host keeps the room for the
+picture from the first frame and nothing moves when it arrives; without it the
+text below moves once. The picture is drawn one pixel to a point, grown with the
+reading's zoom, never wider than the column, and its caption is set under it.
+
+What the host shows by its caption instead: a picture inside a sentence, one
+not among the pictures, one whose format the host's decoder does not read (EMF,
+SVG, TIFF), and every one on a host older than this — which is why nothing
+breaks on an older host, the document only reads without its pictures. The last
+eight documents' pictures are kept to be asked for; the content is
+`{kind: markdown, text, pictures: {handle, ids, sizes: {key: [w, h]}}}` and the
+host asks with `document.picture`.
 
 ### Sound
 
@@ -1676,6 +1720,7 @@ Use `plugin.log(...)` or write to stderr, which is captured into the plugin log.
 | `sheet.press` | `handle`, `sheet`, `id`, `selection` | `{notice?, copy?}` or `null` |
 | `sheet.select` | `handle`, `sheet`, `selection` | — |
 | `sheet.activate` | `handle`, `sheet`, `row`, `column` | `{notice?, copy?}` or `null` |
+| `document.picture` | `handle`, `id` | `{data: base64}` |
 | `fs.roots` | `scheme` | `[{url, label, subtitle, icon}]` |
 | `fs.defaultLocation` | `scheme` | `{url}` |
 | `fs.list` | `url` | `{entries: [entry]}` |

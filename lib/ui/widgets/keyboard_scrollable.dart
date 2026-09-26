@@ -19,6 +19,7 @@ class KeyboardScrollable extends StatefulWidget {
     required this.builder,
     required this.hasKeyboard,
     this.controller,
+    this.before,
   });
 
   /// Draws the thing, given the controller that scrolls it.
@@ -30,6 +31,11 @@ class KeyboardScrollable extends StatefulWidget {
   /// too — a search jumping to what it found. Left null this owns its own,
   /// which is what everything that is only read wants.
   final ScrollController? controller;
+
+  /// Asked about every key first, by a reading that moves in its own way —
+  /// a book turned a page at a time rather than scrolled. What it handles is
+  /// not scrolled as well.
+  final KeyEventResult Function(KeyEvent event)? before;
 
   /// A line, in logical pixels. Not a text line: this scrolls things whose
   /// lines are all different heights — a heading, a rule, a table — and a
@@ -104,6 +110,8 @@ class _KeyboardScrollableState extends State<KeyboardScrollable> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    final first = widget.before?.call(event);
+    if (first == KeyEventResult.handled) return first!;
     if (!_scroll.hasClients) return KeyEventResult.ignored;
 
     final page = _scroll.position.viewportDimension;
