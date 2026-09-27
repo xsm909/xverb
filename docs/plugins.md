@@ -168,6 +168,10 @@ own. Declare the lowest level that has everything you use:
 | --- | --- | --- |
 | 1 | 1.0 | everything before levels were counted |
 | 2 | 1.1.0.502 | `plugin.document` and a document's pictures; backslash escapes in Markdown |
+| 3 | 1.1.1 | `plugin.progress` and `plugin.cancelled` in a viewer, and `Cancelled`; the `html` content kind |
+
+A new level is always a new third number of Xverb's version — 1.1.1 is level 3 —
+so the version a person reads says the host changed under the plugins.
 
 A plugin declaring a level the application does not speak yet is listed greyed
 in the plugin manager, with its Install turned off and the reason beside it —
@@ -536,6 +540,39 @@ def list_archive(url):
 
 plugin.run()
 ```
+
+### A page in HTML
+
+When none of the shapes fits, a viewer or a view may return a page of its own:
+
+```python
+from xverb import html
+
+return html('''
+  <h2 style="color:#2a7">Build passed</h2>
+  <p>312 tests in <b>41 s</b>. <a href="button:rerun">Run again</a></p>
+''')
+```
+
+**Drawn by the host, not by a browser.** The markup becomes the
+application's own widgets — HTML and a good part of CSS: colours, fonts,
+margins, padding, borders, text alignment, lists and tables. Nothing runs:
+`<script>`, `on…` attributes, frames, `<object>`, `<embed>` and forms are not
+drawn. A web view would have run them, and would have taken the keyboard for
+itself.
+
+**Nothing is fetched.** A picture is drawn only from a `data:` URL; from the
+network, a `file:` path or anywhere else it is drawn as its `alt` text. A page
+showing a file somebody sent must not be able to tell them it was opened.
+
+**Links.** `http`, `https` and `mailto` open in the system when clicked.
+`button:<id>` presses the button `id` — a view hears it as a `button` event,
+exactly like a button its content declared, so a page can drive its own view.
+Anything else does nothing. Tab lists every link on the page for the keyboard,
+searchable, and Enter follows one.
+
+At most 4 MB of markup; a longer text belongs in `markdown`, whose reader
+builds only what is on screen. Needs API level 3.
 
 ### Pictures in a document
 
@@ -1205,6 +1242,35 @@ an EXIF thumbnail: decoding a whole 24-megapixel file to make a 128-pixel square
 is work nobody asked for. Eight seconds, and answering `None` puts the name
 back, which is what was there before.
 
+### `progress`: how far a slow viewer has got
+
+A viewer that takes seconds — a 30 MB model, a long book — can say how far it
+has got, and the reading page draws that instead of a spinner:
+
+```python
+from xverb import Cancelled
+
+@plugin.viewer("fbx.model", "3D model", extensions=["fbx"])
+def model(url):
+    size = plugin.stat(url)["size"]
+    for offset in range(0, size, 1 << 20):
+        plugin.progress(done=offset, total=size)
+        chunk = plugin.read_file(url, max_bytes=1 << 20, offset=offset)
+        ...
+```
+
+`plugin.progress(fraction)` or `plugin.progress(done=, total=)`. Call it as
+often as you like: reports closer than a twentieth of a second or half a
+percent apart are not sent. **The number must be yours.** The host never
+invents one — no timer, no guess from the file's size — so a viewer that says
+nothing shows a spinner, and that is honest.
+
+**Leaving the page is cancelling.** When the person presses Esc or moves to the
+next file, the host tells the plugin, and the next `plugin.progress` raises
+`Cancelled`. Let it propagate; the SDK answers for you, and the host has
+already stopped listening. Work with no fraction to report can ask
+`plugin.cancelled` between steps instead. Both need API level 3.
+
 ### `produces`: what kind of thing a viewer gives back
 
 `picture`, `sound`, `document`, `drawing`, `model` — a free word, matched
@@ -1690,7 +1756,7 @@ view the row was in.
 
 ### What a view cannot do
 
-Draw its own widgets. A view returns `text`, `markdown`, `image`, `table` or a
+Draw its own widgets. A view returns `text`, `markdown`, `html`, `image`, `table` or a
 `split` of those, exactly as a viewer does, and the host renders them. Rows of a `table` are
 pressable and raise `activate`, and the arrow keys move a cursor along them
 without the plugin being asked anything; nothing else is clickable. If your view needs a
@@ -1710,7 +1776,8 @@ Use `plugin.log(...)` or write to stderr, which is captured into the plugin log.
 | `initialize` | `apiVersion`, `pluginId`, `pluginDirectory`, `platform`, `settings` | `{apiVersion, schemes, viewers, views, commands}` |
 | `shutdown` | — | — |
 | `settings.changed` | `settings` | notification |
-| `viewer.open` | `viewerId`, `url` | content object |
+| `viewer.open` | `viewerId`, `url`, and `token` when the host is watching it | content object |
+| `viewer.cancel` | `token` | notification — handled at once, ahead of the queue |
 | `view.open` | `viewId`, `context` | content object, or `{content, actions, title, status}` |
 | `view.event` | `viewId`, `context`, `event` | the same |
 | `view.close` | `viewId`, `session` | notification |
@@ -1746,6 +1813,7 @@ A view's `context` is `{session, surface, url, isDirectory, selection}` and its
 | `host.log` | `level`, `message` | notification |
 | `host.read` | `url`, `offset`, `length` | `{data: base64, eof}` |
 | `host.apiVersion` | — | `int` |
+| `viewer.progress` | `token`, `fraction` (0..1) | notification |
 
 Calls in both directions may interleave; the SDK dispatches incoming requests
 while it waits for a reply, so calling `host.read` from inside a `viewer.open`

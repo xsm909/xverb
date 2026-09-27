@@ -377,17 +377,31 @@ class FileOperations {
         (path) => registry.lookup(path.scheme)?.canTrash(path) ?? false,
       );
 
+  /// F7. Like [rename], an operation of one step, and told so when it ends.
   Future<void> createDirectory(VfsPath parent, String name) async {
     final target = parent.child(name);
-    await registry.resolve(target).createDirectory(target);
+    final provider = registry.resolve(target);
+    await provider.createDirectory(target);
+    await provider.finishWrites(parent);
   }
 
+  /// F2.
+  ///
+  /// **Then the backend is told the operation is over**, as a copy and a
+  /// delete already told it. A compressed tarball cannot be changed in place,
+  /// so the archives plugin stages every change and writes the archive once,
+  /// when it hears that; a rename that never said so stayed staged — shown in
+  /// the panel, and not in the file on the disk — until the next copy or the
+  /// application's exit. Unlike a copy's, a failure to finish is the rename's
+  /// failure: it is the moment the rename is actually written.
   Future<void> rename(VfsPath path, String newName) async {
     final parent = path.parent;
     if (parent == null) {
       throw VfsException(tr('Cannot rename a root'), path: path);
     }
-    await registry.resolve(path).rename(path, parent.child(newName));
+    final provider = registry.resolve(path);
+    await provider.rename(path, parent.child(newName));
+    await provider.finishWrites(parent);
   }
 
   Future<OperationResult> _transfer(

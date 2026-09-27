@@ -19,6 +19,7 @@ from .fs import (
 from .plugin import (
     ask,
     API_VERSION,
+    Cancelled,
     Plugin,
     ViewContext,
     ViewEvent,
@@ -40,6 +41,7 @@ from .plugin import (
     facts,
     file,
     graph,
+    html,
     image,
     lay_out,
     link,
@@ -69,6 +71,7 @@ from .rpc import RpcError
 __all__ = [
     "ask",
     "API_VERSION",
+    "Cancelled",
     "DIRECTORY",
     "Entry",
     "FILE",
@@ -101,6 +104,7 @@ __all__ = [
     "facts",
     "file",
     "graph",
+    "html",
     "image",
     "lay_out",
     "link",

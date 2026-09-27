@@ -4,7 +4,7 @@ repository: https://github.com/xsm909/xverb
 publish_to: 'none'
 
 # Build number is bumped once per development run — see lib/core/version.dart.
-version: 1.1.0+506
+version: 1.1.1+515
 
 environment:
   sdk: ^3.12.2
@@ -35,6 +35,12 @@ dependencies:
   flutter_acrylic: ^1.1.4
   # The macOS side of that: keeps the material on when the window loses focus.
   macos_window_utils: ^1.9.1
+  # A plugin's page in HTML and CSS, drawn as widgets rather than in a web
+  # view: no script, no network, and the keyboard stays the application's.
+  # MIT, pure Dart; see ui/plugins/html_view.dart for what it is allowed.
+  flutter_widget_from_html_core: ^0.17.4
+  # The parser under it, asked directly for a page's links and its text.
+  html: ^0.15.7
 
 dev_dependencies:
   flutter_test:

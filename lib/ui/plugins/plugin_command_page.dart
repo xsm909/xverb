@@ -14,6 +14,7 @@ import '../notice.dart';
 import '../page_transition.dart';
 import '../viewer/plugin_viewer_page.dart';
 import '../widgets/escape_to_pop.dart';
+import 'html_view.dart';
 import 'plugin_about.dart';
 import '../widgets/title_bar.dart';
 import '../windows/window_layer.dart';
@@ -179,6 +180,9 @@ class _PluginCommandPageState extends State<PluginCommandPage> {
         ViewerContentKind.text =>
           content.text,
         ViewerContentKind.error => content.message,
+        // The words of the page, without its markup: what a person copying
+        // a page wants is what they read on it.
+        ViewerContentKind.html => htmlText(content.text ?? ''),
         ViewerContentKind.table => content.rows
             .map((row) => row.text.join('\t'))
             .join('\n'),

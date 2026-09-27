@@ -32,6 +32,7 @@ class SettingsStore extends ChangeNotifier {
   static const _kSeededPlugins = 'plugins.seeded';
   static const _kShellKind = 'shell.kind';
   static const _kPluginSources = 'plugins.sources';
+  static const _kKnownPlugins = 'plugins.known';
   static const _kConsoleHeight = 'shell.consoleHeight';
   static const _kCommandHistory = 'shell.history';
   static const _kTitleBarOrder = 'plugins.titleBarOrder';
@@ -238,6 +239,16 @@ class SettingsStore extends ChangeNotifier {
       ..insert(0, trimmed);
     await _prefs.setStringList(_kPluginSources, sources);
     notifyListeners();
+  }
+
+  /// Every plugin id the collection has been seen to offer, for telling
+  /// somebody at start-up what has arrived since — see `PluginNews`. Null
+  /// until the first look, which is how that look knows to say nothing.
+  Set<String>? get knownPlugins =>
+      _prefs.getStringList(_kKnownPlugins)?.toSet();
+
+  Future<void> setKnownPlugins(Set<String> ids) async {
+    await _prefs.setStringList(_kKnownPlugins, ids.toList()..sort());
   }
 
   Future<void> removePluginSource(String source) async {

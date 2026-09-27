@@ -1,5 +1,6 @@
 ﻿/// Application version, in `A.B.C.D` form. Each part promises something
-/// different, and only one of the four is decided by eye.
+/// different, and none of the four is decided by eye: each moves when a
+/// named thing changes, and only then.
 ///
 /// **A — the contract with plugins.** It moves when, and only when, the
 /// host/plugin protocol breaks. It is deliberately *not* "a big release": a
@@ -9,16 +10,22 @@
 /// grows whenever the SDK gains something; a move of A is what retires the old
 /// levels, by raising `kPluginApiOldest`.
 ///
-/// **B — something is in the program that was not there before.** Not better,
-/// not fixed, not repainted: absent, then present, with somewhere for the
-/// reader to go — a key, a menu entry, a panel, a settings tab. This is the
-/// judgement call, so when it is not obvious the answer is no. Nothing depends
-/// on getting it right: see the rule about updates below.
+/// **B — the Python the plugins run on.** It moves when the interpreter the
+/// application installs for its plugins moves (3.12 now): a plugin is Python
+/// code, and a new Python is a new ground under every one of them, whatever
+/// else changed.
 ///
-/// **C — a public release.** A version somebody is meant to be able to name.
-/// Moving it says "this one is worth talking about" and nothing else — it is
-/// **not** what decides whether an update is offered, and this used to be
-/// written as though it were.
+/// **C — the application's API for plugins.** Every new plugin API level
+/// (`kPluginApiVersion`) moves C and nothing else does: the host changed under
+/// the plugins, and the version a person reads has to say so. That makes a new
+/// level a decision to take seriously and not a side effect — a plugin written
+/// for it will not run on anything older. Level 3 is 1.1.1.
+///
+/// Neither a new feature nor a public release has a number of its own: a
+/// release is named by its whole version, and what is in it is D's to count.
+/// (Until 2026-09-27 B meant "something new is in the program" and C "a public
+/// release"; the rule was changed then, with few releases out, and 1.1.1 is
+/// the first version under it.)
 ///
 /// **D — the build.** Bumped when a commit is written, and never reset, so a
 /// build number names one commit in the whole history for ever. Kept in step
@@ -30,7 +37,7 @@
 /// that moves only D is offered exactly like one that moves C. That follows
 /// from who publishes and how — every archive on the Releases page is put there
 /// by hand, one at a time, so a build reaching anybody at all is already the
-/// decision that it should. A fix too small to move C can be the fix somebody
+/// decision that it should. A fix that moves only D can be the fix somebody
 /// is waiting for, and there is nothing else here to weigh it against.
 library;
 
@@ -40,11 +47,11 @@ const int kMajor = 1;
 /// B.
 const int kMinor = 1;
 
-/// C. Moving this is the release.
-const int kRelease = 0;
+/// C: the plugin API. See above.
+const int kRelease = 1;
 
 /// D.
-const int kBuildNumber = 506;
+const int kBuildNumber = 515;
 
 /// A.B.C, which is what a release is called: the build is not part of the name.
 ///

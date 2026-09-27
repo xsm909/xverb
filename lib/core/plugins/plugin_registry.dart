@@ -756,23 +756,32 @@ class PluginRegistry extends ChangeNotifier {
     if (head == null || head.isEmpty) return ordered;
 
     final claimed = <String>{};
+    final refused = <String>{};
     await Future.wait([
       for (final viewer in asking)
         viewer
             .probe!(entry.path, head)
-            .then((yes) {
-              if (yes) claimed.add(viewer.id);
-            })
+            .then((yes) => (yes ? claimed : refused).add(viewer.id))
             // A reader that throws has not claimed anything. It is a question,
             // not an operation: the only wrong answer is a stuck one.
-            .catchError((Object _) {}),
+            .catchError((Object _) => false),
     ]).timeout(probeTimeout, onTimeout: () => const []);
 
-    if (claimed.isEmpty) return ordered;
+    // **A viewer that looked and said "not mine" is not offered either.** It
+    // used to go to the back of the list, which put "Book" into Shift+F3 of
+    // every zip in the world because one reader of FictionBook-in-a-zip asks
+    // about them all. One that threw or was late keeps its place: it has not
+    // said anything. And a file every candidate refused keeps them all, the
+    // way it was before anybody could be asked.
+    final kept = [
+      for (final viewer in ordered)
+        if (!refused.contains(viewer.id)) viewer,
+    ];
+    if (kept.isEmpty) return ordered;
     return [
-      for (final viewer in ordered)
+      for (final viewer in kept)
         if (claimed.contains(viewer.id)) viewer,
-      for (final viewer in ordered)
+      for (final viewer in kept)
         if (!claimed.contains(viewer.id)) viewer,
     ];
   }
@@ -1256,7 +1265,7 @@ class PluginRegistry extends ChangeNotifier {
         spec: spec,
         pluginId: entry.manifest.id,
         pluginName: entry.manifest.name,
-        open: (path) => _declarative.render(path, parsed),
+        open: (path, {reading}) => _declarative.render(path, parsed),
       );
       registered.add(spec.id);
     }
@@ -1687,12 +1696,25 @@ class PluginRegistry extends ChangeNotifier {
         spec: spec,
         pluginId: entry.manifest.id,
         pluginName: entry.manifest.name,
-        open: (path) async {
-          final result = await host.channel.call(
-            'viewer.open',
-            params: {'viewerId': spec.id, 'url': path.toString()},
-            timeout: PythonPluginHost.callTimeout,
-          );
+        open: (path, {reading}) async {
+          // The token is how the plugin's reports find this reading, and how
+          // a cancel finds the plugin's work — there may be two opens queued
+          // on one pipe, the second waiting for the first.
+          final token = reading == null ? null : host.watchReading(reading);
+          final Object? result;
+          try {
+            result = await host.channel.call(
+              'viewer.open',
+              params: {
+                'viewerId': spec.id,
+                'url': path.toString(),
+                'token': ?token,
+              },
+              timeout: PythonPluginHost.callTimeout,
+            );
+          } finally {
+            if (token != null) host.forgetReading(token);
+          }
           if (result is! Map) {
             return ViewerContent.error('Viewer returned no content');
           }

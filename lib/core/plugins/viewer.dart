@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 import '../i18n/plugin_strings.dart';
 import '../sheet/plugin_sheet_source.dart';
 import '../sheet/sheet_source.dart';
@@ -20,6 +22,10 @@ import 'plugin_manifest.dart';
 enum ViewerContentKind {
   text,
   markdown,
+
+  /// A page in HTML and CSS, drawn by the host with nothing that runs and
+  /// nothing fetched — see `HtmlContentView`. The markup is in `text`.
+  html,
   image,
   table,
   chart,
@@ -1165,6 +1171,7 @@ class ViewerContent {
   factory ViewerContent.fromJson(Map<String, dynamic> json, {SheetCall? call}) {
     final kind = switch (json['kind'] as String?) {
       'markdown' => ViewerContentKind.markdown,
+      'html' => ViewerContentKind.html,
       'image' => ViewerContentKind.image,
       'table' => ViewerContentKind.table,
       'chart' => ViewerContentKind.chart,
@@ -1397,6 +1404,48 @@ bool givesWayTo(ViewerSpec reading, ViewerSpec other, FileEntry file) =>
 bool opensTheSameKind(ViewerSpec one, ViewerSpec other) =>
     one.produces.isNotEmpty && one.produces == other.produces;
 
+/// One `open` still in flight: how far the plugin says it has got, and the way
+/// to tell it that nobody is waiting any more.
+///
+/// **The fraction comes from the plugin or not at all.** It stays null until
+/// the plugin sends one, and a page with a null fraction shows the spinner it
+/// always did — a bar driven by a timer or by the file's size is a bar that
+/// lies (backlog 118).
+///
+/// Cancelling is leaving: the page that asked calls [cancel] when it is closed
+/// or moves to another file, and the plugin hears it between two of its own
+/// reports. A plugin that never reports simply finishes, and the answer it
+/// gives is dropped.
+class ViewerReading {
+  /// What the plugin last said, 0..1, or null while it has said nothing.
+  final ValueNotifier<double?> fraction = ValueNotifier<double?>(null);
+
+  bool _cancelled = false;
+  void Function()? _onCancel;
+
+  bool get cancelled => _cancelled;
+
+  /// Taken from the plugin's own message; out-of-range values are clamped
+  /// rather than trusted, and a reading already cancelled hears nothing more.
+  void report(double value) {
+    if (_cancelled || value.isNaN) return;
+    fraction.value = value.clamp(0.0, 1.0);
+  }
+
+  /// Installed by whoever sent the `open` — the registry — so the page does
+  /// not have to know there is a pipe.
+  set onCancel(void Function()? callback) => _onCancel = callback;
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    _onCancel?.call();
+    _onCancel = null;
+  }
+
+  void dispose() => fraction.dispose();
+}
+
 class RegisteredViewer {
   const RegisteredViewer({
     required this.spec,
@@ -1412,7 +1461,12 @@ class RegisteredViewer {
   final String pluginName;
 
   /// Asks the plugin to render [path].
-  final Future<ViewerContent> Function(VfsPath path) open;
+  ///
+  /// Given a [ViewerReading], the plugin's progress reports land in it and its
+  /// [ViewerReading.cancel] reaches the plugin. A viewer with nothing to
+  /// report — every declarative one — ignores it.
+  final Future<ViewerContent> Function(VfsPath path, {ViewerReading? reading})
+      open;
 
   /// Asks the plugin whether it claims *this* file, given its first pages —
   /// see [ViewerSpec.probe] for why the question exists.

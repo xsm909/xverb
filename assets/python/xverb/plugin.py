@@ -23,6 +23,8 @@ import inspect
 import json
 import os
 import sys
+import threading
+import time
 from collections import OrderedDict
 import struct
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
@@ -31,7 +33,19 @@ from .fs import FileSystem
 from .rpc import RpcError, RpcPeer
 
 #: Protocol version this SDK speaks. Must match the host's.
-API_VERSION = 2
+API_VERSION = 3
+
+
+class Cancelled(BaseException):
+    """Raised by :meth:`Plugin.progress` once the host has stopped waiting.
+
+    Let it propagate: the host has already left the page and throws the
+    answer away, so there is nothing to clean up but your own files.
+
+    A ``BaseException``, like ``KeyboardInterrupt``, and for the same reason:
+    a reader that tolerates one bad record with ``except Exception`` would
+    otherwise swallow the cancel and go on to the next.
+    """
 
 
 def text(body: str, language: Optional[str] = None, truncated: bool = False) -> dict:
@@ -42,6 +56,20 @@ def text(body: str, language: Optional[str] = None, truncated: bool = False) -> 
         "language": language,
         "truncated": truncated,
     }
+
+
+def html(body: str) -> dict:
+    """A page in HTML and CSS, drawn by the host. Needs plugin API level 3.
+
+    Drawn as the application's own widgets, not in a browser: colours, fonts,
+    margins, borders, tables, lists and pictures, and nothing that runs — no
+    script, no forms, no frames. A picture must be a ``data:`` URL; nothing is
+    fetched from anywhere. ``<a href="https://…">`` opens in the system's
+    browser when clicked; ``<a href="button:save">`` presses the button
+    ``save``, which a view hears as a ``button`` event. Tab lists the links
+    for the keyboard. At most 4 MB of markup.
+    """
+    return {"kind": "html", "text": body}
 
 
 def markdown(body: str, truncated: bool = False) -> dict:
@@ -1353,6 +1381,13 @@ class Plugin:
         self._next_book = 0
         self._documents: "OrderedDict[str, Mapping[str, Picture]]" = OrderedDict()
         self._next_document = 0
+        # The viewer.open being served now, if the host is watching it, and the
+        # tokens the host has given up on. Written from two threads: the
+        # worker serving the open, and the reader hearing viewer.cancel.
+        self._reading: Optional[str] = None
+        self._given_up: set = set()
+        self._reading_lock = threading.Lock()
+        self._last_report = (-1.0, 0.0)
         self._register_methods()
 
     # -- contributions -----------------------------------------------------
@@ -1416,6 +1451,11 @@ class Plugin:
         The head is **bytes and may stop mid-character**: it is the start of a
         file, not a document. Answer from what is there; the question is asked
         again for every file, and a wrong yes is worse than a missed one.
+
+        **A no takes the viewer off the list for that file** — it is not
+        offered under Shift+F3 either, since it has said the file is not its.
+        A probe that raises, or does not answer within 0.9 s, has said
+        nothing, and the viewer keeps its place by its extensions.
         """
 
         def decorate(function: Callable[[str], dict]):
@@ -1651,6 +1691,59 @@ class Plugin:
         return default if value is None else value
 
     # -- host services -----------------------------------------------------
+
+    def progress(
+        self,
+        fraction: Optional[float] = None,
+        done: Optional[float] = None,
+        total: Optional[float] = None,
+    ) -> None:
+        """Says how far a viewer has got with the file it was asked to open.
+
+        Either ``fraction`` (0..1) or ``done`` against ``total`` — bytes,
+        records, pages, whatever the work is counted in::
+
+            for i, chunk in enumerate(chunks):
+                plugin.progress(done=i, total=len(chunks))
+                parse(chunk)
+
+        The host draws it as the bar on the reading page; say nothing and the
+        page shows a spinner, as it always did. Call it as often as you like —
+        reports closer than a twentieth of a second or a half percent apart are
+        not sent. Only a viewer's ``open`` is watched; anywhere else this does
+        nothing.
+
+        **It is also where a cancel is heard.** Once the person has left the
+        page, this raises :class:`Cancelled`; a loop that reports progress
+        stops by itself. Needs plugin API level 3.
+        """
+        with self._reading_lock:
+            token = self._reading
+            if token is None:
+                return
+            if token in self._given_up:
+                raise Cancelled()
+        if fraction is None:
+            if not total:
+                return
+            fraction = float(done or 0) / float(total)
+        fraction = min(1.0, max(0.0, float(fraction)))
+        last, when = self._last_report
+        now = time.monotonic()
+        if fraction < 1.0 and (abs(fraction - last) < 0.005 or now - when < 0.05):
+            return
+        self._last_report = (fraction, now)
+        self._peer.notify("viewer.progress", {"token": token, "fraction": fraction})
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the host has stopped waiting for the open being served.
+
+        For work that has no fraction to report but can stop early. Needs
+        plugin API level 3.
+        """
+        with self._reading_lock:
+            return self._reading is not None and self._reading in self._given_up
 
     def log(self, message: str, level: str = "info") -> None:
         """Writes to the plugin log shown in Settings → Plugins."""
@@ -1983,6 +2076,7 @@ class Plugin:
         peer.register("settings.changed", self._settings_changed)
         peer.register("command.invoke", self._invoke_command)
         peer.register("viewer.open", self._open_viewer)
+        peer.register("viewer.cancel", self._cancel_viewer, at_once=True)
         peer.register("viewer.probe", self._probe_viewer)
         peer.register("describe.open", self._describe)
         peer.register("viewer.thumbnail", self._thumbnail)
@@ -2065,10 +2159,39 @@ class Plugin:
         viewer = self._viewers.get(params.get("viewerId"))
         if viewer is None:
             raise RpcError('Unknown viewer "%s"' % params.get("viewerId"))
-        result = viewer["handler"](params["url"])
+        token = params.get("token")
+        with self._reading_lock:
+            # A cancel can arrive before its open is served — the open was
+            # queued behind another — and the work is then never started.
+            if token is not None and token in self._given_up:
+                self._given_up.discard(token)
+                return error("Cancelled")
+            self._reading = token
+        self._last_report = (-1.0, 0.0)
+        try:
+            result = viewer["handler"](params["url"])
+        except Cancelled:
+            return error("Cancelled")
+        finally:
+            with self._reading_lock:
+                self._reading = None
+                if token is not None:
+                    self._given_up.discard(token)
         if not isinstance(result, dict):
             return error("Viewer returned %s, expected content" % type(result).__name__)
         return result
+
+    def _cancel_viewer(self, params: dict) -> None:
+        token = params.get("token")
+        if token is None:
+            return None
+        with self._reading_lock:
+            self._given_up.add(token)
+            # A cancel for an open already answered is remembered by nobody:
+            # keep the set from growing with them.
+            if len(self._given_up) > 64:
+                self._given_up = {t for t in self._given_up if t == self._reading}
+        return None
 
     def _describe(self, params: dict) -> dict:
         describer = self._describers.get(params.get("describerId"))

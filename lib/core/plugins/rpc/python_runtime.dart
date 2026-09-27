@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -11,6 +12,12 @@ import 'python_installer.dart';
 /// plugins can `import xverb` without any installation step.
 class PythonRuntime {
   PythonRuntime._(this.executable, this.sdkPath, this.version);
+
+  /// An interpreter and an SDK named outright — for a test that runs a real
+  /// plugin with whatever Python the machine has, where nothing is staged
+  /// and there is no support folder to stage it in.
+  @visibleForTesting
+  PythonRuntime.given(this.executable, this.sdkPath) : version = 'given';
 
   /// Absolute path or command name of the interpreter to spawn.
   final String executable;

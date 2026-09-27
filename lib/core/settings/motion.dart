@@ -13,6 +13,13 @@ import 'package:flutter/animation.dart';
 ///
 /// Nothing in this file does anything. Change a number, rebuild, look.
 
+/// A plugin's progress bar moving to the fraction it last reported.
+///
+/// About the gap between two reports: long enough that a bar fed every tenth
+/// of a second moves continuously, short enough that the last report before
+/// the page appears is reached rather than cut.
+const int kProgressGlideDuration = 240;
+
 /// The frame that marks the active panel, changing sides.
 const int kPanelAnimationDuration = 340;
 

@@ -25,6 +25,7 @@ import '../notice.dart';
 import '../plugins/mesh3d_view.dart';
 import '../plugins/node_graph_view.dart';
 import '../plugins/plugin_about.dart';
+import '../plugins/html_view.dart';
 import '../plugins/plugin_form.dart';
 import '../plugins/plugin_table.dart';
 import '../plugins/split_view.dart';
@@ -265,6 +266,10 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     _thumbnails.dispose();
     _stripHeight.dispose();
     _slow?.cancel();
+    // Leaving is the cancelling: a plugin still reading the file for a page
+    // nobody is looking at is told to stop.
+    _inFlight?.cancel();
+    _inFlight?.dispose();
     _memory?.dispose();
     super.dispose();
   }
@@ -272,11 +277,11 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
   /// [page] with a line across the top of it while the next file is being read.
   ///
   /// Over the page rather than instead of it: what was on screen stays legible,
-  /// and the sign of work is the one thing added. An indeterminate bar and not
-  /// a percentage, for the reason [_Loading] gives — the plugin reading the
-  /// file in its own process has no way to say how far it has got.
+  /// and the sign of work is the one thing added. A running bar until the
+  /// plugin says how far it has got, and its own fraction after that.
   Widget _stillReading(AppearanceSettings theme, Widget page) {
-    if (!_reading) return page;
+    final reading = _inFlight;
+    if (!_reading || reading == null) return page;
     return Stack(
       children: [
         page,
@@ -284,10 +289,14 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
           top: 0,
           left: 0,
           right: 0,
-          child: LinearProgressIndicator(
-            minHeight: 2,
-            backgroundColor: Colors.transparent,
-            color: theme.readingForeground.withValues(alpha: 0.5),
+          child: ReadingFraction(
+            reading: reading,
+            builder: (context, value) => LinearProgressIndicator(
+              value: value,
+              minHeight: 2,
+              backgroundColor: Colors.transparent,
+              color: theme.readingForeground.withValues(alpha: 0.5),
+            ),
           ),
         ),
       ],
@@ -353,12 +362,24 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     if (mounted && _reading) setState(() => _reading = false);
   }
 
+  /// The open still waiting for its answer, if any — what the bar reads and
+  /// what leaving cancels. One at a time: a new file cancels the last one's.
+  ViewerReading? _inFlight;
+
   Future<void> _load() async {
     final viewer = _viewer;
+    final previous = _inFlight;
+    previous?.cancel();
+    // Disposed a frame later, not now: a bar of the page being replaced may
+    // still be listening to it in this frame.
+    if (previous != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
+    }
+    final reading = _inFlight = ViewerReading();
     _sayNothingYet();
     try {
       final entry = _entry;
-      final content = await viewer.open(entry.path);
+      final content = await viewer.open(entry.path, reading: reading);
       // A slow viewer may finish after the user switched away from it — to
       // another viewer, or to another file.
       if (mounted && viewer.id == _viewer.id && entry.path == _entry.path) {
@@ -705,11 +726,14 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                       // nothing before the model appears, and a reader with no
                       // word from the application assumes it has hung.
                       //
-                      // Not a percentage yet: what takes the time here is a
-                      // plugin reading the file in its own process, and it has
-                      // no way to say how far along it is. That is a channel to
-                      // build, not a number to invent — backlog 118.
-                      ? _Loading(entry: _entry, viewer: _viewer)
+                      // A percentage only when the plugin sends one: the
+                      // number is the plugin's, never the application's guess
+                      // (backlog 118).
+                      ? _Loading(
+                          entry: _entry,
+                          viewer: _viewer,
+                          reading: _inFlight,
+                        )
                       // Inside the Scaffold rather than outside it: a Material
                       // sets a default text style of its own from the theme,
                       // so a style installed above one is the style nothing
@@ -1465,6 +1489,13 @@ class _PluginContentViewState extends State<PluginContentView> {
           message: content.message ?? tr('The viewer reported an error.'),
         );
 
+      case ViewerContentKind.html:
+        return HtmlContentView(
+          html: content.text ?? '',
+          onButton: widget.onButton,
+          hasKeyboard: _readingTakesKeys(part),
+        );
+
       case ViewerContentKind.markdown:
         return KeyboardScrollable(
           hasKeyboard: _readingTakesKeys(part),
@@ -1721,10 +1752,11 @@ class _Centered extends StatelessWidget {
 /// takes the time is a plugin reading the file in a process of its own, and it
 /// has no way yet to say how far it has got. Backlog 118 is that channel.
 class _Loading extends StatelessWidget {
-  const _Loading({required this.entry, required this.viewer});
+  const _Loading({required this.entry, required this.viewer, this.reading});
 
   final FileEntry entry;
   final RegisteredViewer viewer;
+  final ViewerReading? reading;
 
   @override
   Widget build(BuildContext context) {
@@ -1737,10 +1769,18 @@ class _Loading extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(
+          SizedBox(
             width: 28,
             height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
+            child: reading == null
+                ? const CircularProgressIndicator(strokeWidth: 2.5)
+                : ReadingFraction(
+                    reading: reading!,
+                    builder: (context, value) => CircularProgressIndicator(
+                      value: value,
+                      strokeWidth: 2.5,
+                    ),
+                  ),
           ),
           const SizedBox(height: 16),
           Text(entry.name, style: Theme.of(context).textTheme.titleSmall),
@@ -1752,8 +1792,51 @@ class _Loading extends StatelessWidget {
             Text(formatSize(entry.size), style: quiet),
           const SizedBox(height: 2),
           Text(tr(viewer.spec.title), style: quiet),
+          if (reading != null)
+            ValueListenableBuilder<double?>(
+              valueListenable: reading!.fraction,
+              builder: (context, fraction, _) => fraction == null
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text('${(fraction * 100).floor()}%', style: quiet),
+                    ),
+            ),
         ],
       ),
+    );
+  }
+}
+
+/// What a plugin says of how far it has got, drawn by [builder] — null while
+/// it has said nothing, which an indicator draws as running.
+///
+/// The value glides rather than jumps (rule two): a plugin reports when it
+/// can, not every frame, and a bar that steps from 30 to 45 reads as a
+/// stutter. It only ever glides forwards from where it is drawn.
+class ReadingFraction extends StatelessWidget {
+  const ReadingFraction({
+    super.key,
+    required this.reading,
+    required this.builder,
+  });
+
+  final ViewerReading reading;
+  final Widget Function(BuildContext context, double? value) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<double?>(
+      valueListenable: reading.fraction,
+      builder: (context, fraction, _) {
+        if (fraction == null) return builder(context, null);
+        return TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: fraction),
+          duration: motionOf(context, kProgressGlideDuration),
+          curve: Curves.easeOut,
+          builder: (context, value, _) => builder(context, value),
+        );
+      },
     );
   }
 }

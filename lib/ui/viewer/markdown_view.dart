@@ -1480,6 +1480,13 @@ class _MarkdownViewState extends State<MarkdownView> {
         childCount: _blocks.length - first,
       ),
     ),
+    // **Room after the book's end**, a page of it. The last page of a book is
+    // the one whose anchor is closer to the end than a page is tall, and a
+    // column with nothing below could not be scrolled that far: it stopped a
+    // few pixels short, the page drew its lines lower than they had been
+    // measured, and its window — the measured length — cut the last one and
+    // everything after it. A blurb under a back cover lost all but two lines.
+    SliverToBoxAdapter(child: SizedBox(height: _pageHeight)),
   ];
 
   Widget _pages(BuildContext context, BoxConstraints room) {

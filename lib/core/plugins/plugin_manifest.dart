@@ -27,7 +27,14 @@ import 'grammar.dart';
 ///
 /// Level 2 (1.1.0.502): `plugin.document` and a document's pictures, and the
 /// reader's backslash escapes.
-const int kPluginApiVersion = 2;
+///
+/// Level 3 (Xverb 1.1.1, built from 1.1.0.507): `plugin.progress` and
+/// `plugin.cancelled` — a viewer
+/// says how far it has got, and hears that nobody is waiting any more — and
+/// the `html` content kind.
+///
+/// **A new level moves C of the version** — see `core/version.dart`.
+const int kPluginApiVersion = 3;
 
 /// The oldest plugin API level this build still runs. Level 1 is everything
 /// written for Xverb 1 before levels were counted.

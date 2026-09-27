@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../../i18n/i18n.dart';
 import '../plugin_manifest.dart';
+import '../viewer.dart';
 import 'json_rpc.dart';
 import 'python_runtime.dart';
 
@@ -121,6 +122,28 @@ class PythonPluginHost {
 
   Process? _process;
   JsonRpcChannel? _channel;
+
+  /// The `viewer.open` calls somebody is watching, by the token each was sent
+  /// with. A report for a token not here — a reading already answered, or
+  /// one nobody asked to watch — is dropped.
+  final Map<String, ViewerReading> _readings = {};
+  int _nextReading = 1;
+
+  /// Starts routing the plugin's `viewer.progress` for one open into
+  /// [reading], and gives [ViewerReading.cancel] a way down the pipe.
+  String watchReading(ViewerReading reading) {
+    final token = 'r${_nextReading++}';
+    _readings[token] = reading;
+    reading.onCancel = () {
+      _readings.remove(token);
+      _channel?.notify('viewer.cancel', params: {'token': token});
+    };
+    return token;
+  }
+
+  void forgetReading(String token) {
+    _readings.remove(token)?.onCancel = null;
+  }
   final _exited = Completer<int>();
 
   /// How long a plugin has to answer before the call is abandoned. Generous,
@@ -286,6 +309,15 @@ class PythonPluginHost {
         throw StateError('This host does not provide file access');
       }
       return stat(params['url'] as String);
+    });
+
+    // A notification, not a call: a plugin reporting a hundred times a second
+    // must never wait on the host to hear it.
+    channel.on('viewer.progress', (params) async {
+      final reading = _readings[params['token']];
+      final fraction = params['fraction'];
+      if (reading != null && fraction is num) reading.report(fraction.toDouble());
+      return null;
     });
 
     channel.on('host.viewUpdate', (params) async {

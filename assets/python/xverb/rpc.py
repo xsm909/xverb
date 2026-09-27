@@ -77,9 +77,23 @@ class RpcPeer:
         self._pending: Dict[Any, _Pending] = {}
         self._pending_lock = threading.Lock()
         self._work: "queue.Queue[Optional[dict]]" = queue.Queue()
+        self._at_once: set = set()
 
-    def register(self, method: str, handler: Callable[[dict], Any]) -> None:
+    def register(
+        self, method: str, handler: Callable[[dict], Any], at_once: bool = False
+    ) -> None:
+        """Serves ``method`` with ``handler``.
+
+        ``at_once`` handles it on the thread that reads the host, ahead of the
+        queue — for a message about the work already running, which would
+        otherwise wait until that work was over. Such a handler must be quick
+        and must never call the host.
+        """
         self._handlers[method] = handler
+        if at_once:
+            self._at_once.add(method)
+        else:
+            self._at_once.discard(method)
 
     def notify(self, method: str, params: Optional[dict] = None) -> None:
         """Sends a message the host will not answer. Safe from any thread."""
@@ -145,6 +159,10 @@ class RpcPeer:
                 if message.get("method") == "shutdown":
                     self._dispatch(message)
                     break
+
+                if message.get("method") in self._at_once:
+                    self._dispatch(message)
+                    continue
 
                 self._work.put(message)
         finally:

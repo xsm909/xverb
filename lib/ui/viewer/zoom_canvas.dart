@@ -650,8 +650,8 @@ class _ZoomCanvasState extends State<ZoomCanvas>
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               // Between the way things open here and one pixel to one pixel,
-              // which are the two anybody double-presses for. A picture opens
-              // at 1:1, so for a picture the other one is the whole of it.
+              // which are the two anybody double-presses for. Something that
+              // opens at 1:1 has fit for its other one.
               onDoubleTap: () => _mode == ZoomMode.actual
                   ? _put(_opensIn == ZoomMode.actual ? ZoomMode.fit : _opensIn)
                   : _put(ZoomMode.actual),

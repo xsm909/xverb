@@ -7,7 +7,10 @@ import 'package:provider/provider.dart';
 
 import '../core/i18n/i18n.dart';
 import '../core/platform/key_letters.dart';
+import '../core/i18n/plugin_strings.dart';
+import '../core/plugins/built_in_source.dart';
 import '../core/plugins/plugin_manifest.dart';
+import '../core/plugins/plugin_news.dart';
 import '../core/plugins/plugin_registry.dart';
 import '../core/plugins/view.dart';
 import '../core/plugins/viewer.dart';
@@ -162,6 +165,10 @@ class _CommanderScreenState extends State<CommanderScreen>
       // program that has not finished loading.
       if (takeStartupSplash()) unawaited(showAboutSplash(context));
       unawaited(_offerUpdateWhenDue());
+      _newsTimer = Timer(
+        const Duration(seconds: 6),
+        () => unawaited(_tellOfNewPlugins()),
+      );
       // And again while it runs. A file manager is opened in the morning and
       // left open, so a start is not a schedule — see [_offerUpdateWhenDue].
       // The timer is short and the decision is not: it wakes often and asks
@@ -178,10 +185,14 @@ class _CommanderScreenState extends State<CommanderScreen>
   /// The poll that keeps looking for a release while the application runs.
   Timer? _updatePoll;
 
+  /// The one look for new plugins, a little after the start.
+  Timer? _newsTimer;
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _updatePoll?.cancel();
+    _newsTimer?.cancel();
     _stopWatchingRoots();
     _reading.stop();
     _windows.removeListener(_onWindowsChanged);
@@ -4083,6 +4094,74 @@ class _CommanderScreenState extends State<CommanderScreen>
   /// Nothing is downloaded by the looking, and nothing is installed without an
   /// answer — the three answers and how long each of them lasts are
   /// [UpdatePrompt].
+  /// Says so at start-up when the plugin collection has something it did not
+  /// have the last time — asked of each source's small `index.json`, and only
+  /// about plugins that are not installed and that this build could run.
+  ///
+  /// **Not on the first frame**: the panels are being filled and the network
+  /// is the last thing a start should wait on. And **said once**: what was
+  /// offered is remembered as known the moment it has been said, so the next
+  /// start is quiet until something else arrives.
+  ///
+  /// The very first look has nothing to compare with. Then what the plugin
+  /// manager last showed is what was known — so a plugin that arrived since
+  /// the manager was last opened is still news — and where it was never
+  /// opened, everything is taken as known and nothing is said: a new
+  /// installation is offered the whole collection by the first-run window.
+  Future<void> _tellOfNewPlugins() async {
+    try {
+      await _lookForNewPlugins();
+    } on Object {
+      // A remark nobody asked for is never an error. The next start looks
+      // again.
+    }
+  }
+
+  Future<void> _lookForNewPlugins() async {
+    if (!mounted) return;
+    final addresses = [kBuiltInPluginSource, ..._settings.pluginSources];
+    final offered = <IndexedPlugin>[];
+    final remembered = <IndexedPlugin>[];
+    for (final address in addresses) {
+      final before = await PluginNews.remembered(address);
+      if (before != null) remembered.addAll(before);
+      final now = await PluginNews.fetchIndex(address) ?? before;
+      if (now != null) offered.addAll(now);
+    }
+    if (!mounted || offered.isEmpty) return;
+
+    final known = _settings.knownPlugins ??
+        (remembered.isNotEmpty
+            ? {for (final plugin in remembered) plugin.id}
+            : {for (final plugin in offered) plugin.id});
+    final fresh = PluginNews.fresh(
+      offered: offered,
+      installed: {for (final entry in _app.plugins.entries) entry.manifest.id},
+      known: known,
+    );
+    // Not over a question being answered; the news keeps until next time.
+    if (fresh.isNotEmpty && _windows.hasModal) return;
+    await _settings.setKnownPlugins({...known, for (final p in offered) p.id});
+    if (!mounted || fresh.isEmpty) return;
+
+    final names = [for (final plugin in fresh) saidBy(plugin.id, plugin.name)];
+    final listed = names.length <= 3
+        ? names.join(', ')
+        : tr('{names} and {count} more', {
+            'names': names.take(3).join(', '),
+            'count': names.length - 3,
+          });
+    showNotice(
+      context,
+      names.length == 1
+          ? tr('New plugin: {name}', {'name': listed})
+          : tr('New plugins: {names}', {'names': listed}),
+      actionLabel: tr('Plugins'),
+      onAction: () => unawaited(_openSettings(at: SettingsPlace.plugins)),
+      long: true,
+    );
+  }
+
   Future<void> _offerUpdateWhenDue() => _offerUpdate(asked: false);
 
   /// Help → Check for updates: the same look, because somebody asked for it.
