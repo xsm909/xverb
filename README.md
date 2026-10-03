@@ -1,4 +1,7 @@
+
 # xverb
+
+<img width="1680" height="1050" alt="dark_red" src="https://github.com/user-attachments/assets/6cac0dd3-f614-428f-8e39-139f7a2de08a" />
 
 A dual-pane file manager in the Total Commander tradition, built entirely in
 Flutter and extended with Python plugins.
