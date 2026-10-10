@@ -15,6 +15,8 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import '../settings/portable.dart' show kPortableFolderName;
+
 /// How a swap ended.
 enum SwapOutcome {
   /// The new copy is in place and it started.
@@ -137,6 +139,19 @@ class UpdateSwap {
       return SwapResult(SwapOutcome.refused, problem);
     }
 
+    // A portable copy keeps its data in a folder inside itself, and the folder
+    // is not in the new copy. It goes across before the new copy starts, so the
+    // copy that starts finds its settings where it expects them.
+    if (hadTarget) {
+      try {
+        await _carryData(from: previous, to: target, dropShipped: true);
+      } on Object catch (problem) {
+        await target.delete(recursive: true);
+        await previous.rename(target.path);
+        return SwapResult(SwapOutcome.refused, problem);
+      }
+    }
+
     Object? trouble;
     var started = false;
     try {
@@ -168,6 +183,9 @@ class UpdateSwap {
     }
     onStep?.call(SwapStep.rollingBack);
     if (await target.exists()) {
+      // What the new copy wrote while it tried to start belongs to the user,
+      // not to the copy that is being thrown away.
+      await _carryData(from: target, to: previous);
       await target.delete(recursive: true);
     }
     await previous.rename(target.path);
@@ -182,6 +200,34 @@ class UpdateSwap {
     // The old copy is back on disk even here — it simply did not answer in
     // time, which on a loaded machine is not the same as being broken.
     return SwapResult(SwapOutcome.broken, trouble);
+  }
+
+  /// Moves a portable copy's data folder from one copy to the other, by a
+  /// rename, so it is instant and nothing of it is ever half-copied. A copy
+  /// with no such folder is an ordinary one and nothing happens.
+  ///
+  /// The destination may hold a folder of the same name — the archive ships one,
+  /// so that unpacking it makes a portable copy — and it is the source that is
+  /// the real one. With [dropShipped], a source that has none removes it.
+  static Future<void> _carryData({
+    required Directory from,
+    required Directory to,
+    bool dropShipped = false,
+  }) async {
+    final data = Directory('${from.path}${Platform.pathSeparator}'
+        '$kPortableFolderName');
+    final destination = Directory('${to.path}${Platform.pathSeparator}'
+        '$kPortableFolderName');
+    if (!await data.exists()) {
+      // The old copy was an ordinary one, and the archive's empty folder must
+      // not turn it into a portable one.
+      if (dropShipped && await destination.exists()) {
+        await destination.delete(recursive: true);
+      }
+      return;
+    }
+    if (await destination.exists()) await destination.delete(recursive: true);
+    await data.rename(destination.path);
   }
 }
 

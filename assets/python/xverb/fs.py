@@ -48,7 +48,18 @@ class Entry:
 
 
 class Root:
-    """A starting point offered in the drives-and-connections list."""
+    """A starting point offered in the drives-and-connections list.
+
+    ``children`` are places under this one, shown as its submenu — a phone's
+    camera and downloads under the phone, as the documents are under Home.
+    ``volume`` False makes the row a folder: it opens where it points rather
+    than where the panel last was on that disk, which is what a child wants.
+
+    **Set ``children`` as an attribute rather than passing it**, in a plugin
+    that should also run on an app from before 1.1.1.516: that SDK has no such
+    argument and would stop the plugin at the call, while an attribute it does
+    not know is simply not sent, and the rows go without their submenu.
+    """
 
     def __init__(
         self,
@@ -56,19 +67,29 @@ class Root:
         label: str,
         subtitle: Optional[str] = None,
         icon: str = "server",
+        children: Optional[List["Root"]] = None,
+        volume: bool = True,
     ):
         self.url = url
         self.label = label
         self.subtitle = subtitle
         self.icon = icon
+        self.children = list(children or [])
+        self.volume = volume
 
     def to_json(self) -> dict:
-        return {
+        found = {
             "url": self.url,
             "label": self.label,
             "subtitle": self.subtitle,
             "icon": self.icon,
         }
+        if not getattr(self, "volume", True):
+            found["volume"] = False
+        children = getattr(self, "children", None)
+        if children:
+            found["children"] = [child.to_json() for child in children]
+        return found
 
 
 class FileSystem:

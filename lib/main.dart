@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app.dart';
+import 'core/settings/portable.dart';
 import 'core/settings/settings_store.dart';
 import 'core/settings/window_service.dart';
 import 'core/update/update_swap.dart';
@@ -21,6 +22,9 @@ Future<void> main() async {
   if (Platform.isAndroid || Platform.isIOS) {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
+
+  // Before the first setting is read: a portable copy keeps them beside itself.
+  Portable.apply();
 
   final settings = await SettingsStore.load();
 

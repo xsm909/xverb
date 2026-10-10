@@ -16,6 +16,16 @@ class FileSystemRegistry extends ChangeNotifier {
 
   List<VfsRoot> _knownRoots = const [];
 
+  /// What each scheme answered last, kept between refreshes.
+  ///
+  /// **A refresh replaces a provider's rows when it answers, never before.**
+  /// The list used to be gathered afresh on every pass and published after
+  /// each provider, so whatever had not answered yet was missing from it: a
+  /// phone's rows went and came back every time the drive list was opened —
+  /// a third of a second while USB was asked — and the list jumped under the
+  /// pointer. Each scheme now keeps its rows until it says something else.
+  final Map<String, List<VfsRoot>> _rootsByScheme = {};
+
   /// Roots from the last refresh, available immediately.
   ///
   /// Anything drawn in response to a click — a context menu above all — must
@@ -41,6 +51,7 @@ class FileSystemRegistry extends ChangeNotifier {
   Future<void> unregister(String scheme) async {
     final provider = _providers.remove(scheme);
     if (provider == null) return;
+    _rootsByScheme.remove(scheme);
     await provider.dispose();
     notifyListeners();
     await refreshRoots();
@@ -141,23 +152,34 @@ class FileSystemRegistry extends ChangeNotifier {
   }
 
   Future<void> _onePass() async {
-    final gathered = <VfsRoot>[];
     // A snapshot, because this awaits inside the loop and plugins register
     // their schemes as they finish starting. Anything that arrives meanwhile
     // sets [_again] and is read on the next time round.
-    for (final provider in _providers.values.toList()) {
+    for (final entry in _providers.entries.toList()) {
       try {
-        gathered.addAll(await provider.roots());
+        _rootsByScheme[entry.key] = await entry.value.roots();
       } on Object {
-        // A misbehaving plugin must not empty the whole drive bar.
+        // A misbehaving plugin must not empty the whole drive bar, and one
+        // that failed once keeps the rows it last had.
         continue;
       }
-      _publish(gathered);
+      _publish();
     }
-    _publish(gathered);
+    _rootsByScheme.removeWhere((scheme, _) => !_providers.containsKey(scheme));
+    _publish();
   }
 
-  void _publish(List<VfsRoot> roots) {
+  /// The rows of every scheme, in the order the schemes were registered —
+  /// told to the listeners only when they differ from what they already have.
+  ///
+  /// **Unchanged is not news.** Opening the drive list refreshes it, and a
+  /// refresh that found the same disks used to repaint the list anyway, once
+  /// per provider.
+  void _publish() {
+    final roots = [
+      for (final scheme in _providers.keys) ...?_rootsByScheme[scheme],
+    ];
+    if (sameRoots(roots, _knownRoots)) return;
     _knownRoots = List.unmodifiable(roots);
     notifyListeners();
   }

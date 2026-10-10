@@ -52,6 +52,26 @@ class VfsRoot {
   final List<VfsRoot> children;
 }
 
+/// Whether [a] and [b] would draw the same rows: every field, the children too.
+bool sameRoots(List<VfsRoot> a, List<VfsRoot> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    final x = a[i];
+    final y = b[i];
+    if (x.path.toString() != y.path.toString() ||
+        x.label != y.label ||
+        x.subtitle != y.subtitle ||
+        x.iconName != y.iconName ||
+        x.accelerator != y.accelerator ||
+        x.isVolume != y.isVolume ||
+        !sameRoots(x.children, y.children)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// Raised by providers for anything the caller could reasonably show a user.
 class VfsException implements Exception {
   VfsException(this.message, {this.path, this.cause});
@@ -61,8 +81,7 @@ class VfsException implements Exception {
   final Object? cause;
 
   @override
-  String toString() =>
-      path == null ? message : '$message (${path!.display})';
+  String toString() => path == null ? message : '$message (${path!.display})';
 }
 
 /// The single abstraction every storage backend implements.

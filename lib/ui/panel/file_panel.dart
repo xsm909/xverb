@@ -3,7 +3,8 @@ import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:flutter/gestures.dart' show kDoubleTapTimeout, kPrimaryButton;
+import 'package:flutter/gestures.dart'
+    show DragStartBehavior, kDoubleTapTimeout, kPrimaryButton;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -61,6 +62,12 @@ class ColumnWidths {
   final double size;
   final double modified;
 
+  ColumnWidths withWidth(ColumnKind kind, double width) => ColumnWidths(
+    extension: kind == ColumnKind.extension ? width : extension,
+    size: kind == ColumnKind.size ? width : size,
+    modified: kind == ColumnKind.modified ? width : modified,
+  );
+
   factory ColumnWidths.of(AppearanceSettings theme) => ColumnWidths(
     extension: _width(theme, theme.extensionLetters, digits: false),
     size: _width(theme, theme.sizeDigits, digits: true),
@@ -112,6 +119,24 @@ class ColumnWidths {
   @override
   int get hashCode => Object.hash(extension, size, modified);
 }
+
+/// The three columns that have an edge to pull.
+enum ColumnKind { extension, size, modified }
+
+/// A column held by the hand, and the width in pixels the hand has made it.
+///
+/// **While an edge is held the column is exactly where the pointer put it** —
+/// to the pixel, with no animation — and only on release does it settle on the
+/// nearest whole character, which is what the setting counts. Written by the
+/// grip, read by the panel; one value because both panels draw off one setting
+/// and so both follow.
+class LiveColumn {
+  const LiveColumn(this.kind, this.width);
+  final ColumnKind kind;
+  final double width;
+}
+
+final ValueNotifier<LiveColumn?> liveColumn = ValueNotifier<LiveColumn?>(null);
 
 /// Interpolates between two sets of widths, so all three columns travel on one
 /// animation instead of three that can drift apart.
@@ -771,11 +796,23 @@ class _FilePanelState extends State<FilePanel>
     // animation carrying all of them: the column steps from letter to letter,
     // and a step that is cut rather than travelled reads as the listing
     // flinching. Both panels draw off the one setting, so both move together.
-    return TweenAnimationBuilder<ColumnWidths>(
-      tween: ColumnWidthsTween(end: ColumnWidths.of(theme)),
-      duration: theme.animated(kColumnWidthDuration),
-      curve: kBothCurve,
-      builder: (context, widths, _) => _panel(context, widths),
+    return ValueListenableBuilder<LiveColumn?>(
+      valueListenable: liveColumn,
+      builder: (context, live, _) {
+        final set = ColumnWidths.of(theme);
+        return TweenAnimationBuilder<ColumnWidths>(
+          tween: ColumnWidthsTween(
+            end: live == null ? set : set.withWidth(live.kind, live.width),
+          ),
+          // Held by a hand, a column is not animated: it trails the pointer
+          // otherwise. Let go, it eases the last bit onto a whole character.
+          duration: live == null
+              ? theme.animated(kColumnWidthDuration)
+              : Duration.zero,
+          curve: kBothCurve,
+          builder: (context, widths, _) => _panel(context, widths),
+        );
+      },
     );
   }
 
@@ -1994,6 +2031,7 @@ class _ColumnHeader extends StatelessWidget {
               if (wide) ...[
                 _ColumnGrip(
                   key: columnGripKey('extension'),
+                  kind: ColumnKind.extension,
                   settings: settings,
                   width: widths.extension,
                   height: theme.chromeRowHeight,
@@ -2009,6 +2047,7 @@ class _ColumnHeader extends StatelessWidget {
               ],
               _ColumnGrip(
                 key: columnGripKey('size'),
+                kind: ColumnKind.size,
                 settings: settings,
                 width: widths.size,
                 height: theme.chromeRowHeight,
@@ -2025,6 +2064,7 @@ class _ColumnHeader extends StatelessWidget {
               if (wide) ...[
                 _ColumnGrip(
                   key: columnGripKey('modified'),
+                  kind: ColumnKind.modified,
                   settings: settings,
                   width: widths.modified,
                   height: theme.chromeRowHeight,
@@ -2570,6 +2610,7 @@ class _ColumnGrip extends StatefulWidget {
   const _ColumnGrip({
     super.key,
     required this.settings,
+    required this.kind,
     required this.width,
     required this.height,
     required this.digits,
@@ -2579,6 +2620,7 @@ class _ColumnGrip extends StatefulWidget {
   });
 
   final SettingsStore settings;
+  final ColumnKind kind;
 
   /// The column's width now, which is what the drag starts from.
   final double width;
@@ -2606,23 +2648,49 @@ class _ColumnGripState extends State<_ColumnGrip> {
   bool _pointing = false;
   bool _pulling = false;
 
-  /// Where the column was when this drag began. Kept because the setting moves
-  /// in whole characters: reading the *drawn* width back on every update would
-  /// quantise the same pull twice and make the column crawl behind the hand.
+  /// Where the column was, and where the pointer was, when this drag began.
+  ///
+  /// **The distance is measured on the screen, from the press.** It used to be
+  /// read from the pointer's position *inside the grip* — and the grip moves
+  /// as the column grows, so the hand and the thing it was measured against
+  /// travelled together and the width fell back on itself. A press that has
+  /// not yet moved far enough to count as a drag is counted too, so the column
+  /// does not wait a dozen pixels and then jump.
   double _from = 0;
+  double _pressedAt = 0;
 
-  void _pull(double dx) {
-    final theme = widget.settings.appearance;
-    // Left widens: the column is to the right of this edge, and the name
-    // column beside it gives up what this one takes.
+  AppearanceSettings get _theme => widget.settings.appearance;
+
+  double _pixels(int characters) =>
+      _unit(_theme, digits: widget.digits) * characters + _columnPadding;
+
+  /// The width the hand has made it, kept between the column's own two ends so
+  /// that a pull past either goes nowhere.
+  double _widthFor(double pointerX) => (_from - (pointerX - _pressedAt)).clamp(
+    _pixels(widget.min),
+    _pixels(widget.max),
+  );
+
+  void _release() {
+    final live = liveColumn.value;
+    liveColumn.value = null;
+    if (live == null || live.kind != widget.kind) return;
+    // The nearest whole character: that is what the setting holds.
     final count = columnCharactersFor(
-      theme,
-      _from - dx,
+      _theme,
+      live.width,
       digits: widget.digits,
     ).clamp(widget.min, widget.max);
-    final now = widget.apply(theme, count);
-    if (now == theme) return;
+    if (widget.apply(_theme, count) == _theme) return;
     widget.settings.updateAppearance((a) => widget.apply(a, count));
+  }
+
+  @override
+  void dispose() {
+    if (_pulling && liveColumn.value?.kind == widget.kind) {
+      liveColumn.value = null;
+    }
+    super.dispose();
   }
 
   @override
@@ -2637,14 +2705,24 @@ class _ColumnGripState extends State<_ColumnGrip> {
         behavior: HitTestBehavior.opaque,
         // Pulled by a hand, not by the trackpad's scroll: see kPressDevices.
         supportedDevices: kPressDevices,
-        onHorizontalDragStart: (_) => setState(() {
+        dragStartBehavior: DragStartBehavior.down,
+        onHorizontalDragStart: (details) => setState(() {
           _pulling = true;
           _from = widget.width;
+          _pressedAt = details.globalPosition.dx;
         }),
-        onHorizontalDragUpdate: (details) =>
-            _pull(details.localPosition.dx - _ColumnGrip.reach / 2),
-        onHorizontalDragEnd: (_) => setState(() => _pulling = false),
-        onHorizontalDragCancel: () => setState(() => _pulling = false),
+        onHorizontalDragUpdate: (details) => liveColumn.value = LiveColumn(
+          widget.kind,
+          _widthFor(details.globalPosition.dx),
+        ),
+        onHorizontalDragEnd: (_) {
+          _release();
+          setState(() => _pulling = false);
+        },
+        onHorizontalDragCancel: () {
+          _release();
+          setState(() => _pulling = false);
+        },
         child: SizedBox(
           width: _ColumnGrip.reach,
           height: widget.height,

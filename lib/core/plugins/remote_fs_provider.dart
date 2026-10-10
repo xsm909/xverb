@@ -42,14 +42,22 @@ class RemoteFileSystemProvider extends FileSystemProvider {
   @override
   Future<List<VfsRoot>> roots() async {
     final result = await _call('fs.roots', {'scheme': scheme});
+    return _roots(result);
+  }
+
+  /// A plugin's roots, and the places under each: a phone's camera and
+  /// downloads under the phone, as the documents are under Home.
+  List<VfsRoot> _roots(Object? result) {
     final list = result is List ? result : const [];
     return [
-      for (final item in list.cast<Map>())
+      for (final item in list.whereType<Map>())
         VfsRoot(
           path: VfsPath.parse(item['url'] as String),
           label: item['label'] as String? ?? scheme,
           subtitle: item['subtitle'] as String?,
           iconName: item['icon'] as String? ?? 'server',
+          isVolume: item['volume'] as bool? ?? true,
+          children: _roots(item['children']),
         ),
     ];
   }
@@ -218,10 +226,8 @@ class RemoteFileSystemProvider extends FileSystemProvider {
       _call('fs.delete', {'url': path.toString()});
 
   @override
-  Future<void> rename(VfsPath from, VfsPath to) => _call('fs.rename', {
-        'from': from.toString(),
-        'to': to.toString(),
-      });
+  Future<void> rename(VfsPath from, VfsPath to) =>
+      _call('fs.rename', {'from': from.toString(), 'to': to.toString()});
 
   @override
   Future<bool> copyWithin(VfsPath from, VfsPath to) async {
@@ -243,8 +249,11 @@ class RemoteFileSystemProvider extends FileSystemProvider {
 
   Future<dynamic> _call(String method, Map<String, dynamic> params) async {
     try {
-      return await host.channel
-          .call(method, params: params, timeout: PythonPluginHost.callTimeout);
+      return await host.channel.call(
+        method,
+        params: params,
+        timeout: PythonPluginHost.callTimeout,
+      );
     } on RpcException catch (e) {
       throw VfsException('$displayName: ${e.message}', cause: e);
     } on StateError catch (e) {

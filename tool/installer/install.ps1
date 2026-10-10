@@ -331,9 +331,29 @@ function Install-App {
     Stop-IfRunning
 
     Write-Host "Installing to $Path"
+    # A portable copy keeps its settings in UserSettings beside the program, and
+    # reinstalling over it must not take them with it.
+    $kept = $null
+    $userSettings = Join-Path $Path 'UserSettings'
+    if ($portable -and (Test-Path $userSettings)) {
+        $kept = Join-Path ([IO.Path]::GetTempPath()) ("xverb-settings-" + [Guid]::NewGuid().ToString('N'))
+        Move-Item -Path $userSettings -Destination $kept
+    }
     if (Test-Path $Path) { Remove-Item -Recurse -Force $Path }
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
     Copy-Item -Path (Join-Path $source '*') -Destination $Path -Recurse -Force
+    if ($portable) {
+        # -Path is a portable install: the archive's UserSettings stays, and
+        # whatever was there before replaces it.
+        if ($kept) {
+            Remove-Item -Recurse -Force $userSettings -ErrorAction SilentlyContinue
+            Move-Item -Path $kept -Destination $userSettings
+        }
+    } else {
+        # A normal install keeps its data in %APPDATA%, which is what the
+        # existence of this folder would otherwise override.
+        Remove-Item -Recurse -Force $userSettings -ErrorAction SilentlyContinue
+    }
 
     # A file that arrived in a downloaded archive carries a zone marker, and
     # Windows treats a marked executable as untrusted every time it is started.

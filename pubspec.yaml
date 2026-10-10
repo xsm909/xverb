@@ -4,7 +4,7 @@ repository: https://github.com/xsm909/xverb
 publish_to: 'none'
 
 # Build number is bumped once per development run — see lib/core/version.dart.
-version: 1.1.1+515
+version: 1.1.1+518
 
 environment:
   sdk: ^3.12.2
@@ -25,8 +25,14 @@ dependencies:
   path: ^1.9.0
   # Resolves per-platform locations for settings and the plugin directory.
   path_provider: ^2.1.4
+  # The two platform packages a portable copy substitutes the folder of; see
+  # lib/core/settings/portable.dart.
+  path_provider_platform_interface: ^2.1.2
+  path_provider_windows: ^2.3.0
   # Persists appearance and panel settings.
   shared_preferences: ^2.3.0
+  shared_preferences_platform_interface: ^2.4.1
+  shared_preferences_windows: ^2.4.1
   # Reading the Windows drive table without touching the devices.
   ffi: ^2.1.0
   # Frameless window plus minimise/maximise/drag, so the title bar can be ours.

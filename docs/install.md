@@ -108,3 +108,17 @@ SmartScreen warns about an unrecognised publisher.
 
 [releases]: https://github.com/xsm909/xverb/releases
 [flutter]: https://docs.flutter.dev/get-started/install
+
+## Portable on Windows
+
+The Windows archive can be used without installing. Unpack it anywhere and run
+`xverb\xverb.exe`: the `UserSettings` folder beside the executable is where
+everything is kept — settings, plugins, connections and the Python xverb installs
+for them. Nothing is written to `%APPDATA%` or the registry. Move the `xverb`
+folder, or copy it to a USB stick, and the settings go with it. Updates keep that
+folder.
+
+Saved passwords are encrypted for the Windows account that saved them, so on
+another machine or account they are asked for again. Delete `UserSettings` to go
+back to the usual place. `install.ps1 -Path FOLDER` makes a portable install the
+same way; the default install is not portable.
