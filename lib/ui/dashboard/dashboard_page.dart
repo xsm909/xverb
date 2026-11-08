@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -11,8 +12,9 @@ import '../../core/vfs/fs_provider.dart';
 import '../../core/vfs/fs_registry.dart';
 import '../../core/vfs/vfs_path.dart';
 import '../../state/app_state.dart';
+import '../../state/panel_controller.dart';
 import '../about/about_splash.dart' show AboutColumn, AboutQuiet, AboutRow;
-import 'figures/file_flight.dart';
+import 'figures/commander.dart';
 import 'figures/hairline_kernel.dart';
 import '../motion.dart';
 import '../page_transition.dart';
@@ -132,25 +134,36 @@ class _DashboardPageState extends State<DashboardPage>
               // Transparent because the sheet is painted above, once.
               child: Material(
                 type: MaterialType.transparency,
-                child: SingleChildScrollView(
+                // **The page does not scroll; its lists do.** Everything on it
+                // has its place — the figure the top two fifths, the two lists
+                // the rest — and a long history must not move the figure off
+                // the page. Each list scrolls inside its own column.
                 child: Center(
                   child: ConstrainedBox(
                     // Two columns and no more: a page of lists that runs the
                     // width of a wide window is a page nobody reads across.
                     constraints: const BoxConstraints(maxWidth: 760),
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          _rising(0, 0.6, _figure(theme, app)),
-                          const SizedBox(height: 26),
-                          _rising(
-                            0.25,
-                            1,
-                            IntrinsicHeight(
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                          Expanded(
+                            flex: 4,
+                            child: _rising(
+                              0,
+                              0.6,
+                              _figure(context, theme, app),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Expanded(
+                            flex: 6,
+                            child: _rising(
+                              0.25,
+                              1,
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   Expanded(
                                     child: _places(
@@ -180,7 +193,6 @@ class _DashboardPageState extends State<DashboardPage>
                     ),
                   ),
                 ),
-                ),
               ),
             ),
           ],
@@ -189,29 +201,72 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  /// **The figure**: a sheet leaving one folder and landing in another, drawn
-  /// in lines and leaning towards the pointer.
+  /// **The figure**: this window in miniature, drawn in lines — two panels
+  /// with their location bars, rows and columns, the menu above and the
+  /// command buttons below.
   ///
-  /// It is not a picture of nothing — it is this application's one act, and
-  /// it is told what the window is actually doing: the two folders wear the
-  /// panels' names, and the count is what is marked in the active one.
+  /// It is not a picture of nothing: it is told what the window is actually
+  /// showing. Its rows are the first entries of the two panels, folders as
+  /// folders and files as files, the panel in front is the active one and its
+  /// cursor stands where the panel's does. The pointer picks a row, and the
+  /// read-out under the figure names it.
   ///
   /// The drawing lives in this repository rather than coming from the package
   /// it was made for: that one is private, and a public program cannot depend
-  /// on a private repository. See the head of `figures/file_flight.dart`.
-  Widget _figure(AppearanceSettings theme, AppState app) {
+  /// on a private repository. See the head of `figures/commander.dart`.
+  /// A panel's first rows as the figure draws them. The way up (`..`) is not
+  /// a row of the folder, so it is left out, and the cursor is counted
+  /// without it.
+  static List<HlCommanderRow> _rowsOf(PanelController panel) => [
+    for (final e
+        in panel.entries.where((e) => !e.isParentLink).take(hlCommanderRows))
+      HlCommanderRow(e.name, isFolder: e.isDirectory),
+  ];
+
+  static int _cursorOf(PanelController panel) {
+    final entries = panel.entries;
+    final up = entries.isNotEmpty && entries.first.isParentLink ? 1 : 0;
+    return math.max(0, panel.cursorIndex - up);
+  }
+
+  /// **A row of the figure was pressed**: the real panel goes there. A folder
+  /// is opened in it and a file gets its cursor; either way that panel is the
+  /// active one and the page closes behind it, as a row of the lists below
+  /// does.
+  static void _pick(
+    BuildContext context,
+    AppState app, {
+    required bool left,
+    required int row,
+  }) {
+    final panel = left ? app.left : app.right;
+    final entries = panel.entries.where((e) => !e.isParentLink).toList();
+    if (row >= entries.length) return;
+    final entry = entries[row];
+    app.activate(panel);
+    Navigator.of(context).maybePop();
+    if (entry.isDirectory) {
+      unawaited(panel.navigateTo(entry.path));
+    } else {
+      panel.setCursor(panel.entries.indexOf(entry));
+    }
+  }
+
+  Widget _figure(BuildContext context, AppearanceSettings theme, AppState app) {
     final ink = theme.panelForeground;
     final paper = theme.panelBackground;
     Color toPaper(double t) => Color.lerp(ink, paper, t)!;
 
     return Column(
       children: [
-        SizedBox(
-          height: 210,
-          child: HlFileFlight(
-            files: app.active.markedCount > 0 ? app.active.markedCount : 6,
-            from: app.left.location?.label ?? tr('Left'),
-            to: app.right.location?.label ?? tr('Right'),
+        Expanded(
+          child: HlCommander(
+            onPicked: (left, row) => _pick(context, app, left: left, row: row),
+            left: _rowsOf(app.left),
+            right: _rowsOf(app.right),
+            leftActive: app.leftIsActive,
+            leftCursor: _cursorOf(app.left),
+            rightCursor: _cursorOf(app.right),
             palette: HairlinePalette(
               // The plates are filled and must be the colour they stand on,
               // which here is the page's own sheet.
@@ -250,6 +305,7 @@ class _DashboardPageState extends State<DashboardPage>
     title: tr('Places'),
     appearance: theme,
     menu: menu,
+    scrolls: true,
     children: [
       if (roots.isEmpty)
         AboutQuiet(text: tr('Nowhere yet'), appearance: theme, menu: menu)
@@ -258,7 +314,9 @@ class _DashboardPageState extends State<DashboardPage>
           AboutRow(
             label: root.label,
             hint: root.subtitle ?? root.path.display,
-            icon: root.isVolume ? Icons.storage_outlined : Icons.folder_special_outlined,
+            icon: root.isVolume
+                ? Icons.storage_outlined
+                : Icons.folder_special_outlined,
             appearance: theme,
             menu: menu,
             onPressed: () {
@@ -288,11 +346,12 @@ class _DashboardPageState extends State<DashboardPage>
     title: tr('Recent'),
     appearance: theme,
     menu: menu,
+    scrolls: true,
     children: [
       if (folders.isEmpty)
         AboutQuiet(text: tr('Nowhere yet'), appearance: theme, menu: menu)
       else
-        for (final where in folders.take(10))
+        for (final where in folders)
           AboutRow(
             label: where.label,
             hint: where.display,

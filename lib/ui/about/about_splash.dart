@@ -766,6 +766,7 @@ class AboutColumn extends StatelessWidget {
     required this.children,
     required this.appearance,
     required this.menu,
+    this.scrolls = false,
   });
 
   final String title;
@@ -773,10 +774,16 @@ class AboutColumn extends StatelessWidget {
   final AppearanceSettings appearance;
   final MenuAppearance menu;
 
+  /// **Takes the height it is given and scrolls its rows inside it**, the
+  /// heading staying where it is. For a page that has laid itself out and must
+  /// not move as a whole because one list grew long; the card's columns are
+  /// short and keep their own height.
+  final bool scrolls;
+
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
-    mainAxisSize: MainAxisSize.min,
+    mainAxisSize: scrolls ? MainAxisSize.max : MainAxisSize.min,
     children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
@@ -790,7 +797,15 @@ class AboutColumn extends StatelessWidget {
           ),
         ),
       ),
-      ...children,
+      if (scrolls)
+        Expanded(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: children,
+          ),
+        )
+      else
+        ...children,
     ],
   );
 }
