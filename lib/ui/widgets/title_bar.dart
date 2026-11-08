@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
+
+import '../../core/window/x_window.dart';
+import '../windows/detached_window.dart';
 
 import '../motion.dart';
 import '../../core/i18n/i18n.dart';
@@ -31,7 +35,16 @@ class TitleBar extends StatefulWidget implements PreferredSizeWidget {
     this.menuKeys,
     this.leading = const [],
     this.title,
+    this.onMark,
   });
+
+  /// **Pressing the application's mark.** Given one, the mark is a way in as
+  /// well as a handle to drag the window by: a tap opens whatever the
+  /// application keeps behind it — the front page — while a drag still moves
+  /// the window, because the two gestures are told apart by the hand.
+  ///
+  /// Null everywhere else, where the mark is a handle and nothing more.
+  final VoidCallback? onMark;
 
   /// Drop-down menus shown inline, the way Fork puts its menu bar in the title
   /// bar rather than on a row of its own.
@@ -165,15 +178,26 @@ class _TitleBarState extends State<TitleBar> with WindowListener {
   @override
   void initState() {
     super.initState();
-    if (WindowService.isSupported) {
+    if (!WindowService.isSupported) return;
+    // Where the shape's news comes from: the runner on a machine that owns
+    // its window, `window_manager` on the rest. See [XWindow].
+    if (XWindow.isAvailable) {
+      XWindow.instance.maximized.addListener(_refreshMaximized);
+    } else {
       windowManager.addListener(this);
-      _refreshMaximized();
     }
+    _refreshMaximized();
   }
 
   @override
   void dispose() {
-    if (WindowService.isSupported) windowManager.removeListener(this);
+    if (WindowService.isSupported) {
+      if (XWindow.isAvailable) {
+        XWindow.instance.maximized.removeListener(_refreshMaximized);
+      } else {
+        windowManager.removeListener(this);
+      }
+    }
     super.dispose();
   }
 
@@ -206,8 +230,8 @@ class _TitleBarState extends State<TitleBar> with WindowListener {
         // Not the trackpad's scroll, which would move the window: see
         // kPressDevices.
         supportedDevices: kPressDevices,
-        onPanStart: (_) => WindowService.startDragging(),
-        onDoubleTap: WindowService.toggleMaximize,
+        onPanStart: (_) => WindowActs.of(context).startDragging(),
+        onDoubleTap: WindowActs.of(context).toggleMaximize,
         child: child,
       );
 
@@ -276,9 +300,11 @@ class _TitleBarState extends State<TitleBar> with WindowListener {
                   key: _wordmarkDrag,
                   child: Padding(
                     padding: const EdgeInsets.only(left: 10, right: 12),
-                    child: _Wordmark(
-                      accent: theme.accentColor,
-                      foreground: foreground,
+                    child: _pressable(
+                      _Wordmark(
+                        accent: theme.accentColor,
+                        foreground: foreground,
+                      ),
                     ),
                   ),
                 ),
@@ -338,19 +364,34 @@ class _TitleBarState extends State<TitleBar> with WindowListener {
                       if (widget.title != null)
                         Expanded(
                           child: _draggable(
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(left: 4),
-                                    child: widget.title,
+                            // **The reserve is a wish, not a width.** It was a
+                            // fixed box, and on a page whose bar carries a row
+                            // of its own buttons — a reading does — what is
+                            // left here falls below it: measured at 82.7
+                            // against a reserve of 96, which is a bar
+                            // overflowing by six pixels and an overflow stripe
+                            // drawn across the window. Never more than there
+                            // is; the title gives way first, and below that
+                            // the version is clipped as it always was.
+                            child: LayoutBuilder(
+                              builder: (context, room) => Row(
+                                children: [
+                                  Expanded(
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(left: 4),
+                                      child: widget.title,
+                                    ),
                                   ),
-                                ),
-                                SizedBox(
-                                  width: theme.scaled(_dragReserve),
-                                  child: _versionCorner(theme, foreground),
-                                ),
-                              ],
+                                  SizedBox(
+                                    width: math.min(
+                                      theme.scaled(_dragReserve),
+                                      room.maxWidth,
+                                    ),
+                                    child:
+                                        _versionCorner(theme, foreground),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         )
@@ -398,7 +439,7 @@ class _TitleBarState extends State<TitleBar> with WindowListener {
                         icon: Icons.remove,
                         color: foreground,
                         tooltip: tr('Minimise'),
-                        onPressed: WindowService.minimize,
+                        onPressed: WindowActs.of(context).minimize,
                       ),
                       _WindowButton(
                         icon: _maximized
@@ -407,14 +448,17 @@ class _TitleBarState extends State<TitleBar> with WindowListener {
                         color: foreground,
                         tooltip: _maximized ? tr('Restore') : tr('Maximise'),
                         iconSize: _maximized ? 12 : 14,
-                        onPressed: WindowService.toggleMaximize,
+                        onPressed: WindowActs.of(context).toggleMaximize,
                       ),
                       _WindowButton(
                         icon: Icons.close,
                         color: foreground,
                         tooltip: tr('Close'),
                         danger: true,
-                        onPressed: WindowService.close,
+                        // The first window's close is the application leaving
+                        // — it asks, writes everything down and then goes. A
+                        // detached window's is only that window.
+                        onPressed: WindowActs.of(context).close,
                       ),
                     ],
                   ),
@@ -980,12 +1024,14 @@ class _MenuStripState extends State<_MenuStrip> {
               // fill** and the two become one element: there is one selector
               // on screen and it is the row, not the title. The line round
               // both is drawn in `_MenuOutline`; nothing here draws it.
+              // Only an open menu carries a fill. The pointer merely resting
+              // on a title is said by the contour below, because a block of
+              // colour sliding along the menus as the hand crosses them is a
+              // bar that twitches at everything.
               color: _open == index
                   ? (_menuHasHighlight && widget.style.monolith
                         ? widget.style.surface
                         : widget.accent.withValues(alpha: 0.85))
-                  : _hovered == index || selected
-                  ? widget.accent.withValues(alpha: 0.28)
                   : Colors.transparent,
               // Always drawn, and merely invisible when there is nothing to
               // say: a border that comes and goes is a title that moves two
@@ -993,7 +1039,9 @@ class _MenuStripState extends State<_MenuStrip> {
               border: Border.all(
                 color: selected && _open != index
                     ? widget.accent
-                    : Colors.transparent,
+                    : _hovered == index && _open != index
+                        ? widget.foreground.withValues(alpha: 0.7)
+                        : Colors.transparent,
               ),
               // **The menu's own radius**, not a rounder one of its own: two
               // corner radii in one shape is two shapes, so the title takes
@@ -1025,6 +1073,22 @@ class _MenuStripState extends State<_MenuStrip> {
       );
     }
     return button;
+  }
+}
+
+/// The mark as a way in, when the application gave one.
+///
+/// Inside the drag detector rather than around it: the tap is the inner
+/// gesture and the drag the outer one, so a press that turns into a movement
+/// still moves the window.
+extension on _TitleBarState {
+  Widget _pressable(Widget mark) {
+    final press = widget.onMark;
+    if (press == null) return mark;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(onTap: press, child: mark),
+    );
   }
 }
 
@@ -1112,11 +1176,14 @@ class _WindowButtonState extends State<_WindowButton> {
 
   @override
   Widget build(BuildContext context) {
-    final background = !_hovered
-        ? Colors.transparent
-        : widget.danger
-        ? const Color(0xFFC42B1C)
-        : widget.color.withValues(alpha: 0.12);
+    // **No colour of its own, not even on close.** A red block appearing
+    // under the pointer is the loudest thing in a window made of lines, and
+    // the cross already says what it does. All three buttons answer the same
+    // way as every other control: a contour, and nothing at rest.
+    const background = Colors.transparent;
+    final ring = _hovered
+        ? widget.color.withValues(alpha: 0.7)
+        : Colors.transparent;
 
     return Hint(
       message: widget.tooltip,
@@ -1130,10 +1197,22 @@ class _WindowButtonState extends State<_WindowButton> {
             width: 44,
             height: TitleBar.height,
             color: background,
-            child: Icon(
-              widget.icon,
-              size: widget.iconSize,
-              color: _hovered && widget.danger ? Colors.white : widget.color,
+            alignment: Alignment.center,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOut,
+              width: widget.iconSize + 11,
+              height: widget.iconSize + 11,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: ring),
+              ),
+              child: Icon(
+                widget.icon,
+                size: widget.iconSize,
+                color: widget.color,
+              ),
             ),
           ),
         ),

@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../../state/app_state.dart';
 import '../../state/window_stack.dart';
 
+import 'detached_window.dart';
+
 /// Counts the throwaway windows, so two questions asked in a row cannot land
 /// on the same id and collapse into one window.
 int _nextId = 0;
@@ -33,7 +35,12 @@ Future<T?> showDeskWindow<T>(
   /// guesses below. Global coordinates.
   Rect? origin,
 }) async {
-  final windows = context.read<AppState>().windows;
+  // **The desk of the window it was asked from.** There is one stack per
+  // window — a form a view opens in a detached window belongs over that
+  // window — and the first window offers the application's own through the
+  // same scope. The read below is the fallback for anything built outside a
+  // window root at all, which in practice is tests.
+  final windows = deskOf(context);
 
   // The contents need the window they live in, and the window needs the
   // contents; `late` is what ties the knot.
@@ -170,3 +177,12 @@ class _WindowFormState extends State<WindowForm> {
     );
   }
 }
+
+/// **The desk of the window [context] is in**: the stack its internal windows
+/// open on and are drawn from. One per window — the commander's is the
+/// application's own, and a detached window has one of its own, so nothing
+/// the commander is busy with (a folder being read, a copy) turns up over a
+/// view that was taken away from it. The read of the application's stack is
+/// the fallback for anything built outside a window root, which is tests.
+WindowStack deskOf(BuildContext context) =>
+    WindowStackScope.maybeOf(context) ?? context.read<AppState>().windows;

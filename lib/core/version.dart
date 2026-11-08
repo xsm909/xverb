@@ -51,7 +51,7 @@ const int kMinor = 1;
 const int kRelease = 1;
 
 /// D.
-const int kBuildNumber = 518;
+const int kBuildNumber = 534;
 
 /// A.B.C, which is what a release is called: the build is not part of the name.
 ///

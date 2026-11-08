@@ -3,11 +3,11 @@ import 'package:provider/provider.dart';
 
 import '../../core/i18n/i18n.dart';
 import '../../core/settings/settings_store.dart';
-import '../../state/app_state.dart';
 import '../page_transition.dart';
 import '../widgets/escape_to_pop.dart';
 import '../widgets/title_bar.dart';
 import '../windows/window_layer.dart';
+import '../windows/window_dialogs.dart';
 import 'about_tab.dart';
 import 'settings_view.dart';
 
@@ -104,7 +104,7 @@ class SettingsPage extends StatelessWidget {
               // instead of behind them. Only the front-most page draws the
               // stack — see WindowLayer.
               child: WindowLayer(
-                stack: context.read<AppState>().windows,
+                stack: deskOf(context),
                 child: const Scaffold(
                   backgroundColor: Colors.transparent,
                   body: SettingsView(),

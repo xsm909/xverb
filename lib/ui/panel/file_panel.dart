@@ -34,6 +34,7 @@ import '../widgets/listing_motion.dart';
 import '../widgets/press_and_hold.dart';
 import '../widgets/trail_bar.dart';
 import '../widgets/hint.dart';
+import '../windows/detach.dart';
 import '../picture_filter.dart';
 
 /// The three column widths, worked out from the settings and the font.
@@ -879,7 +880,13 @@ class _FilePanelState extends State<FilePanel>
       // which is never beside anything, because there is one of it — can be as
       // round as it likes.
       child: Container(
-        color: theme.effectivePanelBackground,
+        // Named, because the strips are the panel's own colour now and
+        // "the container painted in the panel colour" finds those too.
+        key: const ValueKey('panel-slab'),
+        // **It paints no sheet of its own.** The one sheet is painted behind
+        // both panels at once, so the air around them is the same colour and
+        // the same thickness of glass — see `_panelsArea` in the commander
+        // screen.
         // **No padding.** It used to keep the room the frame once reserved, so
         // the selection would not be drawn over the listing's first column of
         // pixels — and what it actually did was leave a two-pixel band of
@@ -1172,7 +1179,13 @@ class _PanelSelectionState extends State<PanelSelection>
             child: DecoratedBox(
               decoration: BoxDecoration(
                 border: Border.all(
-                  color: theme.accentColor,
+                  // **The element colour, not the accent.** The ring says
+                  // which panel the keyboard is in, and it is a line like
+                  // every other line in the window; the accent is left to the
+                  // cursor, which says where in that panel the next key press
+                  // lands. Two things in the same colour, one inside the
+                  // other, were saying it twice.
+                  color: theme.elementColor,
                   // Always a whole number of pixels — see
                   // `AppearanceSettings.panelBorderWidth` for the two holes
                   // that came out of the 1.5 this used to be.
@@ -1267,7 +1280,6 @@ class _PathBarState extends State<_PathBar> {
       onExit: (_) => setState(() => _hovered = false),
       child: Container(
       height: theme.pathBarHeight,
-      color: theme.effectiveHeaderBackground,
       padding: const EdgeInsets.fromLTRB(4, 4, 6, 4),
       child: Row(
         children: [
@@ -1295,6 +1307,9 @@ class _PathBarState extends State<_PathBar> {
                 ? _AttachedTitle(
                     attachment: panel.attachment!,
                     onClose: () => unawaited(panel.detach()),
+                    onDetach: canDetach
+                        ? () => detachFromPanel(context, panel)
+                        : null,
                   )
                 : _Trail(
                     // The whole trail, root first: the pill opens the drive
@@ -1521,10 +1536,18 @@ class _HistoryClockState extends State<_HistoryClock> {
 /// What the path bar says while something else has the panel: the title of
 /// whatever is attached, and the way out.
 class _AttachedTitle extends StatelessWidget {
-  const _AttachedTitle({required this.attachment, required this.onClose});
+  const _AttachedTitle({
+    required this.attachment,
+    required this.onClose,
+    required this.onDetach,
+  });
 
   final PanelAttachment attachment;
   final VoidCallback onClose;
+
+  /// Takes this view into a window of its own, where there is a machine that
+  /// can hold one.
+  final VoidCallback? onDetach;
 
   @override
   Widget build(BuildContext context) {
@@ -1591,6 +1614,22 @@ class _AttachedTitle extends StatelessWidget {
                     ),
                   ),
           ),
+          // **Into a window of its own.** Beside the way out rather than in
+          // it: this is the other thing somebody may want to do with what is
+          // in the panel, and the panel goes back to its listing either way.
+          // Offered only where a window can be made — see [canDetach].
+          if (onDetach != null)
+            Hint(
+              message: '${tr('Open in a window of its own')}  Ctrl+Shift+D',
+              child: IconButton(
+                icon: const Icon(Icons.open_in_new, size: 13),
+                padding: EdgeInsets.zero,
+                constraints:
+                    const BoxConstraints.tightFor(width: 22, height: 22),
+                color: theme.headerForeground.withValues(alpha: 0.75),
+                onPressed: onDetach,
+              ),
+            ),
           // Escape closes it too, but the panel is also worked with a mouse,
           // and a view with no visible way out is a panel that looks stuck.
           Hint(
@@ -1763,14 +1802,11 @@ class _WayBackButtonState extends State<_WayBackButton> {
             height: theme.chromeRowHeight,
             padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
-              color: _hovered
-                  ? theme.accentColor.withValues(alpha: 0.28)
-                  : theme.headerForeground.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(11),
               border: Border.all(
                 color: _hovered
-                    ? theme.accentColor
-                    : theme.headerForeground.withValues(alpha: 0.12),
+                    ? theme.elementColor
+                    : theme.chromeRule,
               ),
             ),
             child: Row(
@@ -1855,16 +1891,14 @@ class _LocationPillState extends State<_LocationPill> {
 
     final Color background;
     final Color foreground;
+    // Open is an inversion; everything short of it is the contour's to say.
     if (widget.open) {
       background = theme.accentColor.withValues(alpha: 0.85);
       foreground = theme.accentColor.computeLuminance() > 0.5
           ? Colors.black
           : Colors.white;
-    } else if (_hovered) {
-      background = theme.accentColor.withValues(alpha: 0.28);
-      foreground = theme.headerForeground;
     } else {
-      background = theme.headerForeground.withValues(alpha: 0.07);
+      background = Colors.transparent;
       foreground = widget.isActive
           ? theme.headerForeground
           : theme.headerForeground.withValues(alpha: 0.6);
@@ -1890,9 +1924,11 @@ class _LocationPillState extends State<_LocationPill> {
               color: background,
               borderRadius: BorderRadius.circular(11),
               border: Border.all(
-                color: widget.open || _hovered
+                color: widget.open
                     ? theme.accentColor
-                    : theme.headerForeground.withValues(alpha: 0.12),
+                    : _hovered
+                        ? theme.elementColor
+                        : theme.chromeRule,
               ),
             ),
             // Only as wide as what it says: the path continues beside it, and
@@ -2017,13 +2053,12 @@ class _ColumnHeader extends StatelessWidget {
         return Container(
           height: theme.chromeRowHeight,
           padding: const EdgeInsets.symmetric(horizontal: 6),
+          // **No fill.** The strip stands on the panel's own sheet; painting
+          // a second sheet of the same glass over it makes a band half again
+          // as dense as the listing, which is a colour saying *this is a
+          // different part of the window* — and the line already says it.
           decoration: BoxDecoration(
-            color: theme.effectiveHeaderBackground,
-            border: Border(
-              bottom: BorderSide(
-                color: theme.headerForeground.withValues(alpha: 0.15),
-              ),
-            ),
+            border: Border(bottom: BorderSide(color: theme.chromeRule)),
           ),
           child: Row(
             children: [
@@ -3240,7 +3275,9 @@ class _RowIconState extends State<_RowIcon> {
 /// ratio read off a rendered pixel is a ratio read twice.
 Color markedTextOnStrip(AppearanceSettings theme) => legibleInk(
   theme.markedColor,
-  on: theme.effectiveHeaderBackground,
+  // The strip is the panel's own sheet — it paints none of its own — so the
+  // ink on it is measured against that.
+  on: theme.effectivePanelBackground,
   fallback: theme.headerForeground,
 );
 
@@ -3303,17 +3340,40 @@ class _StatusText extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = context.watch<SettingsStore>().appearance;
 
+    // **What it says is a pill; the strip itself is nothing.** There was a
+    // hairline over this, and the count sat on the paper under it — two ways
+    // of saying "this row is not part of the listing" where the shape of the
+    // thing says it on its own. The line round the words is the same line as
+    // everywhere else, and the strip keeps the height it had so the listing
+    // above it does not move.
+    //
+    // **At the right-hand end of the panel**, where the sizes and the dates
+    // are. The names run down the left edge and the figures down the right,
+    // and a count of the files is a figure: under the left edge it started a
+    // fourth column of its own below the listing.
     return Container(
       height: theme.chromeRowHeight,
       width: double.infinity,
-      color: theme.effectiveHeaderBackground,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      alignment: Alignment.centerLeft,
-      child: Text(
-        text,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: color, fontSize: theme.fontSize - 1),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      alignment: Alignment.centerRight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(theme.chromeRowHeight / 2),
+          border: Border.all(color: theme.chromeRule),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            widthFactor: 1,
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: color, fontSize: theme.fontSize - 1),
+            ),
+          ),
+        ),
       ),
     );
   }

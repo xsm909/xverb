@@ -354,6 +354,24 @@ class PanelController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// **Gives up what is attached without ending it**, and answers with it.
+  ///
+  /// This is [detach] minus the two calls that matter: the plugin is not told
+  /// the session is over and nothing is disposed, because the thing is not
+  /// finished — it is going into a window of its own and will go on being
+  /// drawn there. Whoever takes it owns it from here, release included.
+  ///
+  /// The panel goes back to its listing exactly as [detach] leaves it: the
+  /// location underneath was never touched.
+  PanelAttachment? handOver() {
+    final attachment = _attachment;
+    if (attachment == null) return null;
+    _attachment = null;
+    attachment.removeListener(_onAttachmentChanged);
+    notifyListeners();
+    return attachment;
+  }
+
   void _onAttachmentChanged() => notifyListeners();
 
   /// Tells whatever is attached that the other panel moved.

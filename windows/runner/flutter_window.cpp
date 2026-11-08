@@ -10,6 +10,7 @@
 #include "file_transfer.h"
 #include "mesh3d.h"
 #include "shell_menu.h"
+#include "window_channel.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -20,6 +21,11 @@ bool FlutterWindow::OnCreate() {
   if (!Win32Window::OnCreate()) {
     return false;
   }
+
+  // **The window is the application's own**: no bar of the platform's, its
+  // size, in the middle of its screen, hidden until Dart has painted. See
+  // window_channel.h for why this is not window_manager's any more.
+  PlaceMainWindow(GetHandle());
 
   RECT frame = GetClientArea();
 
@@ -50,19 +56,20 @@ bool FlutterWindow::OnCreate() {
   // The keyboard belongs to the view, so a menu key is answered there.
   AnswerMenuChar(flutter_controller_->view()->GetNativeWindow());
 
-  flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
-  });
+  // The top band of the view lets the hand through to the window's edge;
+  // only now is there a view to say so of.
+  RegisterWindowChannel(flutter_controller_->engine(), GetHandle());
 
-  // Flutter can complete the first frame before the "show window" callback is
-  // registered. The following call ensures a frame is pending to ensure the
-  // window is shown. It is a no-op if the first frame hasn't completed yet.
+  // **Not shown on the first frame.** Dart puts the backdrop on and then says
+  // `show`; a timer in window_channel.cpp is the floor under a Dart that never
+  // says. A window shown before its backdrop was the startup flash.
   flutter_controller_->ForceRedraw();
 
   return true;
 }
 
 void FlutterWindow::OnDestroy() {
+  UnregisterWindowChannel();
   if (flutter_controller_ && flutter_controller_->view()) {
     // Before the engine goes: OLE holds a reference to the drop target, and
     // the drop target answers by sending messages down a channel.
@@ -79,6 +86,13 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // The frame, the edges and the way out are the window channel's, before
+  // anything of Flutter's or a plugin's can answer them.
+  LRESULT answered = 0;
+  if (HandleMainWindowMessage(hwnd, message, wparam, lparam, &answered)) {
+    return answered;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =

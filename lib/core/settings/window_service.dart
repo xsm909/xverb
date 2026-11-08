@@ -6,6 +6,7 @@ import 'package:macos_window_utils/macos_window_utils.dart' as macos;
 import 'package:window_manager/window_manager.dart';
 
 import '../version.dart';
+import '../window/x_window.dart';
 import 'appearance_settings.dart';
 import 'backdrop_channel.dart';
 import 'window_log.dart';
@@ -39,6 +40,18 @@ class WindowService {
     await WindowLog.start();
     WindowLog.write('initialize, backdrop=${appearance.backdrop.name}');
 
+    // **Our own window, where the runner answers for it.** Nothing is asked
+    // of the packages then — not even their initialisation, which is the
+    // call that would take the application down once the engine accepts
+    // several views. The runner has already hidden the window, taken the
+    // platform's bar off it and sized it; all that is left is the backdrop
+    // and the showing, which [_reveal] does after the first frame.
+    if (XWindow.isAvailable) {
+      WindowLog.write('initialize -> the runner owns the window');
+      _lateReveal(appearance);
+      return;
+    }
+
     await windowManager.ensureInitialized();
     await acrylic.Window.initialize();
 
@@ -64,8 +77,12 @@ class WindowService {
       );
     });
 
-    // A hidden window that never gets revealed is far worse than a missing
-    // blur, so show it regardless if the first frame never arrives.
+    _lateReveal(appearance);
+  }
+
+  /// A hidden window that never gets revealed is far worse than a missing
+  /// blur, so it is shown regardless if the first frame never arrives.
+  static void _lateReveal(AppearanceSettings appearance) {
     Future<void>.delayed(const Duration(seconds: 4), () async {
       if (_revealed) return;
       WindowLog.write('no first frame after 4s; showing anyway');
@@ -90,8 +107,12 @@ class WindowService {
     _revealed = true;
 
     await applyBackdrop(appearance, reason: 'first frame');
-    await windowManager.show();
-    await windowManager.focus();
+    if (XWindow.isAvailable) {
+      await XWindow.instance.show();
+    } else {
+      await windowManager.show();
+      await windowManager.focus();
+    }
     WindowLog.write('window shown');
   }
 
@@ -212,6 +233,18 @@ class WindowService {
     acrylic.WindowEffect effect, {
     required String reason,
   }) async {
+    // **The runner's own window first.** It wears the same material the
+    // package set, so this is the same window with one plugin fewer in it.
+    // The Mac only: on Windows the accent below was the runner's already.
+    if (XWindow.ownsTheGlass) {
+      final said =
+          await XWindow.instance.applyBackdrop(appearance.backdrop.index);
+      _current = effect;
+      WindowLog.write(
+          '$reason -> ${appearance.backdrop.name} ok (runner: $said)');
+      return;
+    }
+
     // Our own channel first: it writes the accent once, where the package
     // blanks the window with ACCENT_DISABLED before every effect it sets and
     // so flashes on every re-apply.
@@ -279,15 +312,46 @@ class WindowService {
     }
   }
 
-  static Future<bool> isMaximized() async =>
-      isSupported && await windowManager.isMaximized();
+  /// **The backdrop on one of the windows the application opened**, which
+  /// [applyBackdrop] does not reach: it speaks to the window the application
+  /// started in. [handle] is the window's address, as the windowing API gave
+  /// it. The Mac's runner wears the material; Windows' writes the accent,
+  /// with the same tint and the same dark flag as the first window.
+  static Future<void> applyBackdropTo(
+    AppearanceSettings appearance, {
+    required int? handle,
+  }) async {
+    if (handle == null) return;
+    if (XWindow.ownsTheGlass) {
+      await XWindow.instance
+          .applyBackdrop(appearance.backdrop.index, handle: handle);
+      return;
+    }
+    if (BackdropChannel.isAvailable) {
+      await BackdropChannel.setAccent(
+        _accentFor(appearance),
+        color: _tintFor(appearance),
+        dark: appearance.darkChrome,
+        handle: handle,
+      );
+    }
+  }
+
+  static Future<bool> isMaximized() async {
+    if (!isSupported) return false;
+    if (XWindow.isAvailable) return XWindow.instance.isMaximized();
+    return windowManager.isMaximized();
+  }
 
   static Future<void> minimize() async {
-    if (isSupported) await windowManager.minimize();
+    if (!isSupported) return;
+    if (XWindow.isAvailable) return XWindow.instance.minimize();
+    await windowManager.minimize();
   }
 
   static Future<void> toggleMaximize() async {
     if (!isSupported) return;
+    if (XWindow.isAvailable) return XWindow.instance.toggleMaximize();
     if (await windowManager.isMaximized()) {
       await windowManager.unmaximize();
     } else {
@@ -303,12 +367,16 @@ class WindowService {
   /// tore the process down where it stood, and everything kept in memory until
   /// the way out — the folder history above all — was kept until nothing.
   static Future<void> close() async {
-    if (isSupported) await windowManager.close();
+    if (!isSupported) return;
+    if (XWindow.isAvailable) return XWindow.instance.requestClose();
+    await windowManager.close();
   }
 
   /// Closes it for real, once whoever was asked has finished.
   static Future<void> destroy() async {
-    if (isSupported) await windowManager.destroy();
+    if (!isSupported) return;
+    if (XWindow.isAvailable) return XWindow.instance.destroy();
+    await windowManager.destroy();
   }
 
   /// Makes [close] an *ask* rather than an act.
@@ -317,10 +385,16 @@ class WindowService {
   /// [destroy]**, because a window that asks and is never answered is a window
   /// nobody can close.
   static Future<void> preventClose() async {
-    if (isSupported) await windowManager.setPreventClose(true);
+    if (!isSupported) return;
+    // The runner's own window always asks: `windowShouldClose` tells Dart and
+    // answers no, so there is nothing to switch on.
+    if (XWindow.isAvailable) return;
+    await windowManager.setPreventClose(true);
   }
 
   static Future<void> startDragging() async {
-    if (isSupported) await windowManager.startDragging();
+    if (!isSupported) return;
+    if (XWindow.isAvailable) return XWindow.instance.startDragging();
+    await windowManager.startDragging();
   }
 }

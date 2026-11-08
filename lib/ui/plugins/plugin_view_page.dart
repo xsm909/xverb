@@ -22,7 +22,9 @@ import 'plugin_icons.dart';
 import 'plugin_table.dart' show driveTable;
 import 'row_menu.dart';
 import 'view_pill.dart';
+import '../windows/detach.dart';
 import '../windows/window_layer.dart';
+import '../windows/window_dialogs.dart';
 
 /// A plugin's view, filling the window.
 ///
@@ -118,13 +120,31 @@ class _PluginViewPageState extends State<PluginViewPage> {
     _attachment.start(location: widget.location);
   }
 
+  /// Whether this page has given its view away to a window of its own, in
+  /// which case the view is not over and nothing here may end it.
+  bool _handedOver = false;
+
   @override
   void dispose() {
     // The plugin is told the session is over, but nothing here can wait for
-    // it: the page is going away this frame.
-    unawaited(_attachment.release());
-    _attachment.dispose();
+    // it: the page is going away this frame. **Unless the view was detached**
+    // — then it is still on the screen in a window of its own, and that
+    // window owns it, release included.
+    if (!_handedOver) {
+      unawaited(_attachment.release());
+      _attachment.dispose();
+    }
     super.dispose();
+  }
+
+  /// **Into a window of its own.** The view goes on exactly as it is — the
+  /// same session, the same state, no reload — and this page closes behind
+  /// it, because one view is one thing and it is now over there.
+  void _detach() {
+    if (_handedOver || !canDetach) return;
+    _handedOver = true;
+    detachFromPage(context, _attachment);
+    Navigator.of(context).pop(false);
   }
 
   @override
@@ -145,6 +165,12 @@ class _PluginViewPageState extends State<PluginViewPage> {
         // still a plugin somebody may want to know the version of.
         if (isPluginAboutKey(event)) {
           unawaited(_showAbout());
+          return KeyEventResult.handled;
+        }
+        // Ahead of the view's own keys for the same reason: where the view is
+        // drawn is the application's business, not the plugin's.
+        if (canDetach && isDetachKey(event)) {
+          _detach();
           return KeyEventResult.handled;
         }
         return _onKey(event);
@@ -182,6 +208,13 @@ class _PluginViewPageState extends State<PluginViewPage> {
                       icon: Icons.flip_to_back,
                       tooltip: tr('Show in the panel'),
                       onPressed: _toPanel,
+                    ),
+                  if (canDetach)
+                    TitleBarButton(
+                      icon: Icons.open_in_new,
+                      tooltip:
+                          '${tr('Open in a window of its own')}  Ctrl+Shift+D',
+                      onPressed: _detach,
                     ),
                 ],
                 menus: [
@@ -222,7 +255,7 @@ class _PluginViewPageState extends State<PluginViewPage> {
               ),
               Expanded(
                 child: WindowLayer(
-                  stack: context.read<AppState>().windows,
+                  stack: deskOf(context),
                   child: Scaffold(
                     backgroundColor: Colors.transparent,
                     body: switch (_attachment.content) {
@@ -271,7 +304,9 @@ class _PluginViewPageState extends State<PluginViewPage> {
                     width: double.infinity,
                     alignment: Alignment.centerLeft,
                     padding: const EdgeInsets.symmetric(horizontal: 8),
-                    color: theme.effectiveHeaderBackground,
+                    decoration: BoxDecoration(
+                      border: Border(top: BorderSide(color: theme.chromeRule)),
+                    ),
                     child: Text(
                       _attachment.status!,
                       overflow: TextOverflow.ellipsis,

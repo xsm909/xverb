@@ -223,11 +223,15 @@ class _WindowFrameState extends State<WindowFrame> {
         ? theme.effectiveWindowBackground.withValues(alpha: 0.9)
         : theme.effectiveWindowBackground;
 
-    // The window's own contour, and the rule under its title bar: one colour,
-    // and the accent's while the window has the keyboard.
+    // The window's own contour, and the rule under its title bar: **the line
+    // colour**, the same one the application's own window is drawn with and
+    // the same one round a panel, a button and a pill. It was the accent
+    // while the window had the keyboard, which said *this one* in the colour
+    // the cursor uses to say where the next key press lands; a window that
+    // does not have the keyboard says so by going quiet instead.
     final edge = widget.active
-        ? theme.accentColor.withValues(alpha: 0.75)
-        : theme.panelForeground.withValues(alpha: 0.18);
+        ? theme.elementColor
+        : theme.elementColor.withValues(alpha: theme.elementColor.a * 0.45);
 
     Widget body = DecoratedBox(
       decoration: BoxDecoration(color: surface, borderRadius: shape),

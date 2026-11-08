@@ -36,24 +36,29 @@ import 'package:flutter/widgets.dart';
 import '../colour_contrast.dart';
 import 'appearance_settings.dart';
 
-/// The three colours a palette is made of.
+/// The colours a palette is made of: **paper and accent**.
+///
+/// It was three. The third was the chrome — a second surface for the strips
+/// and the menus — and the application is one piece of material now: the
+/// bar, the headings, the status line and a menu are all the paper, told
+/// apart by a line rather than by a colour. So the chrome is the paper, and
+/// what remains of the seed is the name, because a palette file has always
+/// had three keys in it and an older build still reads ours.
 @immutable
 class PaletteSeeds {
   const PaletteSeeds({
     required this.paper,
-    required this.chrome,
+    Color? chrome,
     required this.accent,
   });
 
-  /// The listing itself — the surface most of the window is.
+  /// The listing itself — and, since the window is one sheet, the strips, the
+  /// menus and the pages too.
   final Color paper;
 
-  /// The furniture around it: the header, the status strip, the menus.
-  ///
-  /// Its own colour rather than a shade of [paper], because that is the choice
-  /// his light palette is built on — light paper under dark chrome. Deriving
-  /// this from the paper would have made that palette unreachable.
-  final Color chrome;
+  /// The paper. See the note on the class: a palette that still names a
+  /// second surface is read, and what it names is dropped.
+  Color get chrome => paper;
 
   /// The one hue that means *this one*: the cursor, the frame, the links, and
   /// the family the directory and marked colours are spread out of.
@@ -73,16 +78,22 @@ class PaletteSeeds {
   /// Used to read seeds off a settings file written before seeds existed, and
   /// to show three swatches for a palette that carries a full set of colours
   /// and no recipe.
+  /// **The chrome is the paper.** There is nothing left that is made of a
+  /// second surface colour — the strips, the menus and the pages are all the
+  /// one sheet — so the seed is read back as the paper rather than off a
+  /// surface that no longer carries it. The field stays because a palette
+  /// written before this is still read, and because three seeds is the shape
+  /// a palette file has.
   factory PaletteSeeds.of(AppearanceSettings settings) => PaletteSeeds(
     paper: settings.panelBackground,
-    chrome: settings.headerBackground,
+    chrome: settings.panelBackground,
     accent: settings.accentColor,
   );
 
+  /// [chrome] is accepted and ignored — see the note on the class.
   PaletteSeeds copyWith({Color? paper, Color? chrome, Color? accent}) =>
       PaletteSeeds(
         paper: paper ?? this.paper,
-        chrome: chrome ?? this.chrome,
         accent: accent ?? this.accent,
       );
 
@@ -100,7 +111,6 @@ class PaletteSeeds {
   /// and it stays one line however many keys are added here.
   Map<String, dynamic> derive() {
     final ink = _inkOn(paper);
-    final chromeInk = _inkOn(chrome);
 
     return {
       'panelBackground': paper.toARGB32(),
@@ -114,8 +124,31 @@ class PaletteSeeds {
       'readingBackground': paper.toARGB32(),
       'readingForeground': ink.toARGB32(),
 
-      'headerBackground': chrome.toARGB32(),
-      'headerForeground': chromeInk.toARGB32(),
+      // **The strips are the paper, because the window is one space.** The
+      // bar, the column headings, the path and the status line stand on the
+      // same sheet the panels do, and the hairline under them is the whole of
+      // what marks them off; a strip filled with a colour of its own makes
+      // the head of the window a separate object laid over the program. The
+      // chrome seed carries nothing any more: it is the paper, and it is
+      // kept only so that a palette file keeps the shape it has always had.
+      'headerBackground': paper.toARGB32(),
+      'headerForeground': ink.toARGB32(),
+
+      // **The line the window is drawn with: white on a dark palette, dark
+      // grey on a light one.** His decision, and it is about strength rather
+      // than hue. The line used to be the ink laid thinly over the paper — a
+      // hairline on a sheet — which meant every palette drew the window in a
+      // wash of its own paper: a teal-grey on Iceland, a warm beige on
+      // Parchment, a blue on Norton. Everything in this application is drawn
+      // with this one line, so a line that changes strength from palette to
+      // palette is the whole window changing weight for a reason nobody
+      // chose. Two values, and the paper decides which: the contour reads the
+      // same in all fourteen.
+      //
+      // Not derived from the ink any more, so a palette whose paper and ink
+      // are close no longer comes out with a line that cannot be seen. A
+      // palette that wants its own line presses one, like any other colour.
+      'elementColor': (isDark ? _lineOnDark : _lineOnLight).toARGB32(),
 
       'accentColor': accent.toARGB32(),
       // One colour, because he had already made them one in both his palettes.
@@ -124,21 +157,19 @@ class PaletteSeeds {
       'directoryColor': _directory().toARGB32(),
       'markedColor': _marked().toARGB32(),
 
-      // Dark over a light paper, light over a dark one — a white stripe on a
-      // near-white panel is nothing at all. The alphas are the ones that
-      // shipped.
-      'alternateRowColor': (isDark
-              ? const Color(0x08FFFFFF)
-              : const Color(0x0A000000))
-          .toARGB32(),
+      // **No stripe.** A palette does not bring one back: a listing is one
+      // sheet and the eye is held by the cursor, not by a band under every
+      // second row. It stays a colour somebody can press if they want it.
+      'alternateRowColor': const Color(0x00000000).toARGB32(),
       'darkChrome': isDark,
 
-      // **The menu is chrome.** Which is exactly what `menuFollowsPalette`
-      // did — take the header's *pair*, its fill and the ink chosen to be read
-      // on that fill. The flag said the same thing in a place the user had to
-      // find; here it is simply what a menu is.
-      'menuBackground': chrome.toARGB32(),
-      'menuForeground': chromeInk.toARGB32(),
+      // **The menu is the window's own sheet.** It used to be made of the
+      // chrome — a second colour, so that a menu was a slab of something else
+      // laid over the program. The application is one piece of material: a
+      // menu is the same paper with a line round it and a shadow under it,
+      // and what tells it from the window behind is the line, not a colour.
+      'menuBackground': paper.toARGB32(),
+      'menuForeground': ink.toARGB32(),
       // **The outline is not derived**, and that is a decision rather than an
       // omission. It is not an ink on a surface — it is a line drawn round one,
       // white by default because that is what the joined menu-and-title shape
@@ -177,6 +208,21 @@ class PaletteSeeds {
   /// is one hue at two ends, and this computes it back to within a shade.
   /// **The saturation is cut** because an ink at the paper's own saturation is
   /// a coloured ink, and a listing is read, not looked at.
+  /// **The line, which is one of two colours and not a shade of the paper.**
+  ///
+  /// White on a dark palette, dark grey on a light one. The whole window is
+  /// drawn with this one line — the outline round a button, a pill, a field, a
+  /// table's rule, the frame round a panel — so what matters about it is that
+  /// it reads at the same strength everywhere, and a line mixed from the paper
+  /// gave every palette a contour of its own weight.
+  ///
+  /// Grey rather than black on paper, because the lightest papers here are
+  /// near-white and a black line on them is a heavier window than a white line
+  /// on a dark one. This is roughly the mirror of white: about the same
+  /// distance from its paper as white is from a dark palette's.
+  static const Color _lineOnDark = Color(0xFFFFFFFF);
+  static const Color _lineOnLight = Color(0xFF3A3A3A);
+
   static Color _inkOn(Color surface) {
     final hsl = HSLColor.fromColor(surface);
     final dark = surface.computeLuminance() < 0.5;
@@ -254,7 +300,13 @@ class PaletteSeeds {
   /// loads and means what it does say.
   factory PaletteSeeds.fromJson(Map<String, dynamic> json) => PaletteSeeds(
     paper: parseHexColour(json['paper']) ?? initial.paper,
-    chrome: parseHexColour(json['chrome']) ?? initial.chrome,
+    // **The chrome a file carries is read and dropped.** Every palette
+    // written before the window became one sheet names a second surface
+    // colour for the strips and the menus; nothing is made of it now, and a
+    // palette that still carried one would come back as a window divided by
+    // colour the moment it was chosen. The key is still written, so a file
+    // of ours opens in an older build.
+    chrome: parseHexColour(json['paper']) ?? initial.paper,
     accent: parseHexColour(json['accent']) ?? initial.accent,
   );
 

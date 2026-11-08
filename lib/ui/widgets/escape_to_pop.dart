@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../windows/detached_window.dart';
+
 /// Makes Escape close a pushed page.
 ///
 /// Dialogs get this from the framework, but `MaterialPageRoute` does not, so
@@ -28,7 +30,10 @@ class EscapeToPop extends StatelessWidget {
           return KeyEventResult.ignored;
         }
         if (onEscape?.call() ?? false) return KeyEventResult.handled;
-        Navigator.of(context).maybePop();
+        // **Back a route while there is one, and otherwise close the window.**
+        // The same page can be the whole of a detached window, where there is
+        // no route underneath it to pop — see [leaveThePage].
+        leaveThePage(context);
         return KeyEventResult.handled;
       },
       child: child,

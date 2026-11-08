@@ -2735,12 +2735,26 @@ class _ItemRowState extends State<_ItemRow>
         child: Container(
           height: _MenuSurface.rowHeight,
           margin: _MenuSurface.rowMargin,
-          decoration: (open || highlighted) && enabled
-              ? BoxDecoration(
-                  color: style.accent.withValues(alpha: open ? 1 : 0.22),
-                  borderRadius: _MenuSurface.pill,
-                )
-              : null,
+          // **Where the keyboard is in a menu is a ring, not a band.** A
+          // line in a menu stands in a narrow column with air either side of
+          // it, so a filled pill travelling down the list is the loudest
+          // thing on the screen for the smallest of reasons; the contour
+          // says the same and leaves the words alone. A submenu standing
+          // open keeps its fill — that row is holding the window, and an
+          // inversion is how a console says so. The line is always drawn and
+          // merely invisible, or every row would step a pixel as the
+          // selector walked past it.
+          decoration: BoxDecoration(
+            color: open && enabled
+                ? style.accent
+                : Colors.transparent,
+            borderRadius: _MenuSurface.pill,
+            border: Border.all(
+              color: highlighted && enabled && !open
+                  ? style.foreground.withValues(alpha: 0.7)
+                  : Colors.transparent,
+            ),
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: Row(
             children: [
@@ -2936,12 +2950,26 @@ class _GroupRow extends StatelessWidget {
         child: Container(
           height: _MenuSurface.rowHeight,
           margin: _MenuSurface.rowMargin,
-          decoration: open || (highlighted && enabled)
-              ? BoxDecoration(
-                  color: style.accent.withValues(alpha: open ? 1 : 0.22),
-                  borderRadius: _MenuSurface.pill,
-                )
-              : null,
+          // **Where the keyboard is in a menu is a ring, not a band.** A
+          // line in a menu stands in a narrow column with air either side of
+          // it, so a filled pill travelling down the list is the loudest
+          // thing on the screen for the smallest of reasons; the contour
+          // says the same and leaves the words alone. A submenu standing
+          // open keeps its fill — that row is holding the window, and an
+          // inversion is how a console says so. The line is always drawn and
+          // merely invisible, or every row would step a pixel as the
+          // selector walked past it.
+          decoration: BoxDecoration(
+            color: open && enabled
+                ? style.accent
+                : Colors.transparent,
+            borderRadius: _MenuSurface.pill,
+            border: Border.all(
+              color: highlighted && enabled && !open
+                  ? style.foreground.withValues(alpha: 0.7)
+                  : Colors.transparent,
+            ),
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: Row(
             children: [

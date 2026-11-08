@@ -61,9 +61,11 @@ import 'panel/file_panel.dart';
 import 'plugins/plugin_command_page.dart';
 import 'plugins/plugin_icons.dart';
 import 'about/about_splash.dart';
+import 'dashboard/dashboard_page.dart';
 import 'plugins/plugin_table.dart' show driveTable;
 import 'plugins/view_launcher.dart';
 import 'plugins/view_pill.dart' show viewMenuNodes;
+import 'windows/detach.dart';
 import 'search/search_window.dart';
 import 'settings/settings_page.dart';
 import 'viewer/plugin_viewer_page.dart';
@@ -284,7 +286,11 @@ class _CommanderScreenState extends State<CommanderScreen>
             ListenableBuilder(
               listenable: Listenable.merge([appState.active.attachment]),
               builder: (context, _) =>
-                  TitleBar(menus: _titleMenus(), menuKeys: _menuKeys),
+                  TitleBar(
+                    menus: _titleMenus(),
+                    menuKeys: _menuKeys,
+                    onMark: () => unawaited(_openDashboard()),
+                  ),
             ),
             Expanded(
               child: SafeArea(
@@ -323,9 +329,11 @@ class _CommanderScreenState extends State<CommanderScreen>
                         children: [
                           if (!consoleOwnsIt)
                             Expanded(
-                              child: sideBySide
-                                  ? _twoPanels(appState)
-                                  : _singlePanel(appState),
+                              child: _panelsArea(
+                                sideBySide
+                                    ? _twoPanels(appState)
+                                    : _singlePanel(appState),
+                              ),
                             ),
                           // Everything below the panels, measured as one: a
                           // remark floats above this rather than over it. See
@@ -436,9 +444,10 @@ class _CommanderScreenState extends State<CommanderScreen>
       mainAxisSize: full ? MainAxisSize.max : MainAxisSize.min,
       children: [
         // What divides this from the panels: one hairline, the same one that
-        // runs under the menu and under the tabs. Here rather than on
-        // the console pane, because the strip starts with the command line
-        // when the console is closed.
+        // runs under the menu. Here rather than on the console pane, because
+        // the strip starts with the command line when the console is closed.
+        // The panels keep their air above it; the line is the edge of what is
+        // below, not of what is above.
         Container(height: 1, color: theme.chromeRule),
         if (full) Expanded(child: console) else console,
         ExcludeFocus(
@@ -502,6 +511,36 @@ class _CommanderScreenState extends State<CommanderScreen>
               ),
             ],
           );
+  }
+
+  /// **The sheet the panels stand on, with a little air above and below.**
+  ///
+  /// The ring that says which panel has the keyboard is drawn on the panel's
+  /// own edge, so with the panels flush against the window's furniture it was
+  /// drawn *over* the hairline under the title bar and over the strip below —
+  /// a line cutting into the head of the window rather than a frame round a
+  /// panel.
+  ///
+  /// The air is the window's own sheet and not a gap: a gap would show the
+  /// desktop through as a bright slot, which is the same thing that was found
+  /// between the two panels (see [_twoPanels]). So the sheet is painted here,
+  /// once, and the panels themselves paint none of their own — one thickness
+  /// of glass over the whole of it, which is what keeps a translucent window
+  /// one colour.
+  Widget _panelsArea(Widget child) {
+    final theme = context.watch<SettingsStore>().appearance;
+    return ColoredBox(
+      color: theme.effectivePanelBackground,
+      child: Padding(
+        // **The same small air on all four outer edges.** The two panels stay
+        // flush against each other — a slot between them shows the desktop
+        // through, see [_twoPanels] — so this is the left edge of the left
+        // panel, the right edge of the right one, and the air above and below
+        // both.
+        padding: const EdgeInsets.all(4),
+        child: child,
+      ),
+    );
   }
 
   /// The panels sit flush against each other. A spacer between them showed the
@@ -1048,6 +1087,17 @@ class _CommanderScreenState extends State<CommanderScreen>
         _app.commandLine.recall(shift ? -1 : 1);
       case LogicalKeyboardKey.keyQ:
         unawaited(_views.toggleQuickView());
+      // **Ctrl+Shift+D: what a panel is showing goes into a window of its
+      // own.** The panel holding something is the one it acts on, whichever
+      // side that is — Ctrl+Q hands the *inactive* panel the quick view, so
+      // the keyboard is in the other one and asking about "the active panel"
+      // here would mean nothing is detached.
+      case LogicalKeyboardKey.keyD:
+        if (!shift) break;
+        final holder = _app.active.isAttached
+            ? _app.active
+            : (_app.inactive.isAttached ? _app.inactive : null);
+        if (holder != null) detachFromPanel(context, holder);
       // The three clipboard keys. Ctrl+V is the one with two meanings, and
       // what is on the clipboard decides which — see [_pasteHere].
       case LogicalKeyboardKey.keyC:
@@ -2759,6 +2809,12 @@ class _CommanderScreenState extends State<CommanderScreen>
   List<MenuNode> _viewMenu() {
     final settings = _settings;
     return [
+      MenuItem(
+        tr('Dashboard'),
+        icon: Icons.dashboard_outlined,
+        keywords: const ['front', 'page', 'start', 'places', 'recent'],
+        onSelected: () => unawaited(_openDashboard()),
+      ),
       MenuGroup(tr('Sort by'), [
         MenuItem(
           tr('Name'),
@@ -4330,6 +4386,14 @@ class _CommanderScreenState extends State<CommanderScreen>
       };
 
   /// Settings, opened [at] a tab when the command that asked names one.
+  /// **The front page**, on the application's mark and in the View menu —
+  /// a mark is a way in for somebody who already knows the program, so the
+  /// keyboard has to be able to reach it by reading as well.
+  Future<void> _openDashboard() async {
+    await DashboardPage.open(context);
+    if (mounted) _keyboard.requestFocus();
+  }
+
   Future<void> _openSettings({SettingsPlace? at}) async {
     // A page, not a window: settings are somewhere you go and come back from,
     // and they want the whole area rather than a frame floating over it. The

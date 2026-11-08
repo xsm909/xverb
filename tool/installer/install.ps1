@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs xverb.
 
@@ -207,6 +207,7 @@ function Get-ReleaseNames {
     if ($From) {
         if (-not (Test-Path $From)) { throw "No such directory: $From" }
         return @(Get-ChildItem -Path $From -Filter 'xverb-*-windows-*.zip' -File |
+            Where-Object { $_.Name -notlike '*-portable.zip' } |
             ForEach-Object { $_.Name })
     }
     # The releases endpoint lists every release with the files attached to it.
@@ -214,7 +215,7 @@ function Get-ReleaseNames {
     # cannot be read must not be reported as a repository holding no release.
     $listing = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=100" -UseBasicParsing
     return @($listing | ForEach-Object { $_.assets } | ForEach-Object { $_.name } |
-        Where-Object { $_ -like 'xverb-*-windows-*.zip' })
+        Where-Object { $_ -like 'xverb-*-windows-*.zip' -and $_ -notlike '*-portable.zip' })
 }
 
 # The largest version, compared number by number rather than as text, so that
@@ -289,6 +290,7 @@ function Find-Archive {
     foreach ($directory in @($here, (Get-DownloadsDirectory))) {
         if (-not $directory -or -not (Test-Path $directory)) { continue }
         $found = Get-ChildItem -Path $directory -Filter 'xverb-*-windows-*.zip' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notlike '*-portable.zip' } |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
         if ($found) { return $found.FullName }

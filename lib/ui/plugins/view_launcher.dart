@@ -13,6 +13,7 @@ import '../dialogs/common_dialogs.dart';
 import '../dialogs/progress_dialog.dart';
 import '../notice.dart';
 import '../page_transition.dart';
+import '../windows/detach.dart';
 import '../viewer/plugin_viewer_page.dart';
 import 'plugin_view_page.dart';
 
@@ -92,6 +93,11 @@ class ViewLauncher {
     // information again, and the third press did nothing at all. The first
     // page was still there, underneath the second, so the claim was honest —
     // what was wrong was refusing without saying so and without going to it.
+    // **Already in a window of its own.** One view is one thing wherever it
+    // is: the window comes forward rather than a second copy being made,
+    // which is the page claim's rule with windows added to it.
+    if (raiseDetachedView(context, view.id)) return;
+
     if (!app.claimPage(view.id)) {
       final name = AppState.pageRouteName(view.id);
       Navigator.of(context).popUntil((route) =>
@@ -275,6 +281,11 @@ class ViewLauncher {
     RegisteredView view,
     PanelController target,
   ) async {
+    // Detached into a window of its own: that window is brought forward, for
+    // the reason above. Doing otherwise would start a second session the
+    // plugin would then answer for twice.
+    if (raiseDetachedView(context, view.id)) return;
+
     // Already here. Handing the panel the same view again would throw away
     // whatever it had built — a measured disk, say — and start it over.
     final held = target.attachment;

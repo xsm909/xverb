@@ -12,7 +12,16 @@ import '../viewer/reading_colours.dart';
 /// where you can see which is which.
 enum PreviewTarget {
   panel,
-  header,
+
+  /// **The line everything is drawn with** — the outline round a button, a
+  /// pill, a field, a frame, a rule in a table. The design is contours rather
+  /// than fills, so this is the colour most of the window is actually drawn
+  /// in, and it is pressed on a thing that wears it rather than on a hairline
+  /// nobody can hit: the pill in the viewer's bar.
+  ///
+  /// It replaced the header's background, which the window being one sheet
+  /// left nothing for.
+  element,
   fileText,
   directoryText,
   marked,
@@ -159,9 +168,11 @@ class AppearancePreview extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // The strips are the panel's own sheet, so pressing one is
+                // pressing the paper — there is nothing else under them.
                 _pickable(
-                  PreviewTarget.header,
-                  'Header background',
+                  PreviewTarget.panel,
+                  'Panel background',
                   _header(font),
                 ),
                 for (var i = 0; i < _rows.length; i++) _row(i, font),
@@ -174,8 +185,8 @@ class AppearancePreview extends StatelessWidget {
                   const SizedBox(height: 62, width: double.infinity),
                 ),
                 _pickable(
-                  PreviewTarget.header,
-                  'Header background',
+                  PreviewTarget.panel,
+                  'Panel background',
                   _status(font),
                 ),
               ],
@@ -235,8 +246,8 @@ class AppearancePreview extends StatelessWidget {
           // pair as the strips above, pressed here as well because this is
           // also where it is used.
           _pickable(
-            PreviewTarget.header,
-            'Header background',
+            PreviewTarget.panel,
+            'Panel background',
             Container(
               height: theme.chromeRowHeight,
               padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -263,6 +274,31 @@ class AppearancePreview extends StatelessWidget {
                           1,
                           sizeDelta: -1,
                         ),
+                      ),
+                    ),
+                  ),
+                  // **The line, pressed on something that wears it.** A
+                  // hairline is a pixel wide and cannot be hit; the pill in
+                  // the viewer's bar is the same colour drawn round a thing,
+                  // and it is in the preview for the same reason the console
+                  // and the menu are — a colour is pressed where it is used.
+                  _pickable(
+                    PreviewTarget.element,
+                    'Element',
+                    Container(
+                      height: theme.chromeRowHeight - 8,
+                      padding: const EdgeInsets.symmetric(horizontal: 7),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(11),
+                        border: Border.all(color: theme.chromeRule),
+                      ),
+                      child: _cell(
+                        'md',
+                        font,
+                        theme.headerForeground,
+                        1,
+                        sizeDelta: -2,
                       ),
                     ),
                   ),

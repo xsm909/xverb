@@ -334,7 +334,7 @@ class _AppearanceTabState extends State<AppearanceTab> {
   /// side is two lists that drift.
   static String _settingKeyFor(PreviewTarget target) => switch (target) {
     PreviewTarget.panel => 'panelBackground',
-    PreviewTarget.header => 'headerBackground',
+    PreviewTarget.element => 'elementColor',
     PreviewTarget.headerText => 'headerForeground',
     PreviewTarget.fileText => 'panelForeground',
     PreviewTarget.directoryText => 'directoryColor',
@@ -620,9 +620,13 @@ class _AppearanceTabState extends State<AppearanceTab> {
           _colour(settings, 'Panel background', theme.panelBackground,
               (a, c) => a.copyWith(panelBackground: c),
               target: PreviewTarget.panel),
-          _colour(settings, 'Header background', theme.headerBackground,
-              (a, c) => a.copyWith(headerBackground: c),
-              target: PreviewTarget.header),
+          // **There is no header background any more.** The window is one
+          // space: the bar, the column headings, the path and the status line
+          // stand on the panel's own sheet, and what marks them off is the
+          // hairline — which is drawn in the colour below.
+          _colour(settings, 'Element', theme.elementColor,
+              (a, c) => a.copyWith(elementColor: c),
+              target: PreviewTarget.element),
           _colour(settings, 'Header text', theme.headerForeground,
               (a, c) => a.copyWith(headerForeground: c),
               target: PreviewTarget.headerText),

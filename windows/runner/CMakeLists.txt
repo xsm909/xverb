@@ -14,6 +14,7 @@ add_executable(${BINARY_NAME} WIN32
   "gl_context.cpp"
   "mesh3d.cpp"
   "shell_menu.cpp"
+  "window_channel.cpp"
   "flutter_window.cpp"
   "main.cpp"
   "utils.cpp"
@@ -40,7 +41,7 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
-target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib" "comctl32.lib")
 # The shell's drag loop, its data objects and its item arrays.
 target_link_libraries(${BINARY_NAME} PRIVATE "shell32.lib" "ole32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")

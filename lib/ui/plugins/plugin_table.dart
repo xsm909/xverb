@@ -595,12 +595,7 @@ class _Header extends StatelessWidget {
         horizontal: _PluginTableState._padding,
       ),
       decoration: BoxDecoration(
-        color: theme.effectiveHeaderBackground,
-        border: Border(
-          bottom: BorderSide(
-            color: theme.headerForeground.withValues(alpha: 0.15),
-          ),
-        ),
+        border: Border(bottom: BorderSide(color: theme.chromeRule)),
       ),
       child: Row(
         children: [

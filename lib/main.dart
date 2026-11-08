@@ -1,5 +1,7 @@
 import 'dart:io';
 
+// ignore: implementation_imports, invalid_use_of_internal_member
+import 'package:flutter/src/foundation/_features.dart' show isWindowingEnabled;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -15,6 +17,16 @@ import 'ui/about/about_splash.dart';
 import 'ui/update/updater_screen.dart';
 
 Future<void> main() async {
+  // **Several windows on one engine, switched on by the application itself.**
+  // The flag in `pubspec.yaml` is only honoured on Flutter's main channel; on
+  // stable it is "unavailable" and dropped without a word, and the first
+  // detached window then throws "Windowing APIs are not enabled". The engine
+  // has the windowing in it either way — it is only the framework's gate, and
+  // the gate is a variable. Measured on 3.47.2: the compile-time flag set is
+  // empty and this one line opens it. Nothing uses it on a machine whose
+  // runner cannot adopt a window; see `ProgramWindows.canDetach`.
+  // ignore: invalid_use_of_internal_member
+  isWindowingEnabled = true;
   WidgetsFlutterBinding.ensureInitialized();
 
   // On a phone the app takes the whole screen. It draws its own title bar,
@@ -53,7 +65,12 @@ Future<void> main() async {
   // knows the process has just begun. See `wantAboutAtStartup`.
   if (settings.appearance.showAboutAtStart) wantAboutAtStartup();
 
-  runApp(XverbApp(state: state));
+  // **The application is not one window.** With several views allowed on the
+  // engine there is no single view to draw into, so what is run is the whole
+  // application and it puts out as many windows as it has. `runApp` would
+  // draw into the view the platform calls implicit, which under several views
+  // has no window behind it at all.
+  runWidget(XverbApp(state: state));
 
   // After the first frame, and not before: the marker is how a copy that
   // installed this one learns that it got as far as a window. Clearing it

@@ -221,7 +221,13 @@ class _Part extends StatelessWidget {
               Container(
                 height: theme.chromeRowHeight,
                 width: double.infinity,
-                color: theme.effectiveHeaderBackground,
+                // The strip stands on the page's own sheet and is marked off
+                // by its line; a fill of its own would be a second sheet.
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: theme.chromeRule),
+                  ),
+                ),
                 child: part.tabs.isEmpty
                     ? _Title(title!, theme)
                     : _Tabs(part: part, theme: theme, onButton: onButton),

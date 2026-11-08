@@ -18,8 +18,9 @@ enum XButtonShape {
   /// A circle, for a single icon that should feel like a knob.
   circle,
 
-  /// No outline and no fill until hovered, for icons packed into a dense bar
-  /// where borders would be noise.
+  /// Nothing at rest, for icons packed into a dense bar where a standing
+  /// outline would be noise. Under the pointer it is a contour like the
+  /// others — never a tile of colour.
   bare,
 }
 
@@ -113,6 +114,12 @@ class _XButtonState extends State<XButton> {
     };
     final foreground = enabled ? base : base.withValues(alpha: 0.38);
 
+    // **A state is a line, not a wash.** The design is contours and inverted
+    // colour; a rounded tile of ink appearing under the pointer is the thing
+    // that rule replaced. So an ordinary button paints nothing at rest, draws
+    // its contour at seven tenths under the pointer and whole while it is
+    // held — and the one fill left is the accent's breath on something that
+    // is *chosen*, which the segmented control says the same way.
     Color background;
     if (widget.tone == XButtonTone.filled) {
       background = theme.accentColor.withValues(
@@ -126,24 +133,32 @@ class _XButtonState extends State<XButton> {
       );
     } else if (widget.selected) {
       background = theme.accentColor.withValues(alpha: _hovered ? 0.30 : 0.22);
-    } else if (_pressed) {
-      background = (widget.ink ?? theme.panelForeground).withValues(alpha: 0.20);
-    } else if (_hovered && enabled) {
-      background = (widget.ink ?? theme.panelForeground).withValues(alpha: 0.12);
     } else {
       background = Colors.transparent;
     }
 
-    final showBorder = widget.outlined || widget.shape == XButtonShape.circle;
-    final radius = switch (widget.shape) {
-      XButtonShape.circle => widget.height / 2,
-      // A pill is a stadium: the radius is simply half the height.
-      XButtonShape.pill => widget.height / 2,
-      XButtonShape.bare => 5.0,
-    };
+    // The contour that says the state. A button that carries a body already —
+    // the primary one, the chosen one — says it with that body instead, and
+    // its outline stays where it was.
+    final saysStateWithALine =
+        widget.tone != XButtonTone.filled && !widget.selected && enabled;
+    final lineInk = widget.ink ?? theme.panelForeground;
+    final showBorder = widget.outlined ||
+        widget.shape == XButtonShape.circle ||
+        (saysStateWithALine && (_hovered || _pressed));
+    // A pill is a stadium: the radius is simply half the height, and an
+    // icon's square box makes that same radius a circle. Only a bare button
+    // carrying words keeps the small corner.
+    final radius = widget.shape == XButtonShape.bare && widget.label != null
+        ? 5.0
+        : widget.height / 2;
 
     // A circle must stay circular whatever the label would have wanted.
-    final isCircular = widget.shape == XButtonShape.circle;
+    // **An icon on its own is a ring.** Its box is square, so the pill the
+    // contour is drawn on is a circle — the shape a round thing pressed
+    // should have. With words it is the same circle stretched to hold them.
+    final isCircular = widget.shape == XButtonShape.circle ||
+        widget.label == null;
     final horizontal = isCircular
         ? 0.0
         : widget.label == null
@@ -217,13 +232,23 @@ class _XButtonState extends State<XButton> {
           decoration: BoxDecoration(
             color: background,
             borderRadius: BorderRadius.circular(radius),
-            border: showBorder
-                ? Border.all(
-                    color: widget.selected
-                        ? theme.accentColor
-                        : foreground.withValues(alpha: _hovered ? 0.55 : 0.3),
-                  )
-                : null,
+            // **The line is always there, and only its colour changes.** A
+            // border that comes and goes takes a pixel off the inside of the
+            // box with it, and the icon steps sideways as the pointer
+            // arrives.
+            border: Border.all(
+              color: !showBorder
+                  ? Colors.transparent
+                  : widget.selected
+                      ? theme.accentColor
+                      : !saysStateWithALine
+                          ? theme.chromeRule
+                          : _pressed
+                              ? lineInk
+                              : _hovered
+                                  ? theme.elementColor
+                                  : theme.chromeRule,
+            ),
           ),
           child: content,
         ),

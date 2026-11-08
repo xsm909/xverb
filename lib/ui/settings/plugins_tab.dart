@@ -838,9 +838,15 @@ class _UpdatesBanner extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      // A notice is a thing on the page, so it is said by a line with a
+      // breath of colour inside it rather than by a block of colour: the
+      // same way a tag is drawn two screens away.
       decoration: BoxDecoration(
         color: theme.colorScheme.primary.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.4),
+        ),
       ),
       child: Row(
         children: [
@@ -1252,9 +1258,12 @@ class _RuntimeBadge extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      // A tag is a pill with a line round it: the fill alone made two tags
+      // of different colours read as two different kinds of object.
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
       ),
       child: Text(
         runtime.label,

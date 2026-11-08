@@ -18,6 +18,7 @@ import 'html_view.dart';
 import 'plugin_about.dart';
 import '../widgets/title_bar.dart';
 import '../windows/window_layer.dart';
+import '../windows/window_dialogs.dart';
 
 /// Runs a plugin command and shows whatever it returned, as a page.
 ///
@@ -272,7 +273,7 @@ class _PluginCommandPageState extends State<PluginCommandPage> {
             ),
             Expanded(
               child: WindowLayer(
-                stack: context.read<AppState>().windows,
+                stack: deskOf(context),
                 child: Scaffold(
                   backgroundColor: Colors.transparent,
                   body: PluginContentView(

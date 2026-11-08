@@ -203,11 +203,17 @@ class _TrailStepState extends State<TrailStep> {
               padding: const EdgeInsets.symmetric(horizontal: 7),
               height: theme.chromeRowHeight,
               alignment: Alignment.center,
+              // The step under the pointer is outlined, not washed: a path
+              // is a row of words on the window's own sheet, and a block of
+              // colour travelling along it as the hand moves is the loudest
+              // thing in the window for the smallest of reasons.
               decoration: BoxDecoration(
-                color: _hovered && !widget.isCurrent
-                    ? theme.accentColor.withValues(alpha: 0.28)
-                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(11),
+                border: Border.all(
+                  color: _hovered && !widget.isCurrent
+                      ? theme.elementColor
+                      : Colors.transparent,
+                ),
               ),
               child: Text(
                 widget.label,

@@ -111,7 +111,10 @@ SmartScreen warns about an unrecognised publisher.
 
 ## Portable on Windows
 
-The Windows archive can be used without installing. Unpack it anywhere and run
+The Windows archive can be used without installing. Each release also carries
+it as `xverb-<version>-windows-x64-portable.zip` — the same files, under a name
+that says so; the installer and the in-app update ignore that one. Unpack it
+anywhere and run
 `xverb\xverb.exe`: the `UserSettings` folder beside the executable is where
 everything is kept — settings, plugins, connections and the Python xverb installs
 for them. Nothing is written to `%APPDATA%` or the registry. Move the `xverb`

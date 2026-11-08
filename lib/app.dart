@@ -3,18 +3,27 @@ import 'dart:io';
 import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
+// **Flutter's windowing, experimental and private.** See
+// `state/program_windows.dart` for what it is and why it is leaned on.
+// ignore: implementation_imports, invalid_use_of_internal_member
+import 'package:flutter/src/widgets/_window.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/plugins/plugin_registry.dart';
 import 'core/settings/appearance_settings.dart';
+import 'core/settings/backdrop_channel.dart';
 import 'core/settings/settings_store.dart';
 import 'core/settings/window_log.dart';
 import 'core/settings/window_service.dart';
+import 'core/window/x_window.dart';
 import 'core/vfs/fs_registry.dart';
 import 'state/app_state.dart';
+import 'state/program_windows.dart';
+import 'state/window_stack.dart';
 import 'ui/commander_screen.dart';
 import 'ui/motion.dart';
+import 'ui/windows/detached_window.dart';
 import 'ui/page_transition.dart';
 import 'ui/text_scale.dart';
 
@@ -30,6 +39,10 @@ class XverbApp extends StatefulWidget {
 }
 
 class _XverbAppState extends State<XverbApp> with WindowListener {
+  /// Every window the application has. The first one is the commander and is
+  /// always there; the rest are views somebody detached.
+  final ProgramWindows _windows = ProgramWindows();
+
   late WindowBackdrop _backdrop = widget.state.settings.appearance.backdrop;
   late bool _dark = widget.state.settings.appearance.darkChrome;
   late Color _tint = widget.state.settings.appearance.panelBackground;
@@ -91,7 +104,8 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
     super.initState();
     _lifecycle;
     widget.state.settings.addListener(_onSettingsChanged);
-    if (WindowService.isSupported) windowManager.addListener(this);
+    _hearTheWindow();
+    _tellInactiveOpacity();
 
     // The backdrop goes on after Flutter has painted; doing it earlier races
     // with the surface being created. See WindowService.revealAfterFirstFrame.
@@ -104,12 +118,72 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
     });
   }
 
+  /// **Where the window's news comes from.**
+  ///
+  /// The same four facts either way — the keyboard arriving, the keyboard
+  /// leaving, the shape changing and the window being asked to close. On a
+  /// machine whose runner owns the window they come from it; everywhere else
+  /// they are still `window_manager`'s, and the methods below are the same
+  /// methods in both cases. See [XWindow] for why the window stopped being a
+  /// plugin's.
+  void _hearTheWindow() {
+    if (!WindowService.isSupported) return;
+    if (XWindow.isAvailable) {
+      final window = XWindow.instance;
+      window.focused.addListener(_frontChanged);
+      window.maximized.addListener(_shapeChanged);
+      window.keyboardIn.addListener(_keyboardMoved);
+      window.onCloseRequested = onWindowClose;
+      return;
+    }
+    windowManager.addListener(this);
+  }
+
+  void _stopHearingTheWindow() {
+    if (!WindowService.isSupported) return;
+    if (XWindow.isAvailable) {
+      final window = XWindow.instance;
+      window.focused.removeListener(_frontChanged);
+      window.maximized.removeListener(_shapeChanged);
+      window.keyboardIn.removeListener(_keyboardMoved);
+      if (window.onCloseRequested == onWindowClose) {
+        window.onCloseRequested = null;
+      }
+      return;
+    }
+    windowManager.removeListener(this);
+  }
+
+  void _frontChanged() {
+    if (XWindow.instance.focused.value) {
+      onWindowFocus();
+    } else {
+      onWindowBlur();
+    }
+  }
+
+  void _shapeChanged() {
+    _rememberShape();
+    _restoreBackdrop('shape');
+  }
+
+  /// **The keyboard has moved to another of the application's windows.**
+  ///
+  /// Flutter's focus is one thing for the whole application, so it has to be
+  /// carried: without this the commander's own keys were acted on by a
+  /// detached window while the hand was in the commander — F3 opened nothing
+  /// and Ctrl+Q did nothing until something was clicked. See
+  /// [ProgramWindows.theKeyboardIsIn].
+  void _keyboardMoved() =>
+      _windows.theKeyboardIsIn(XWindow.instance.keyboardIn.value);
+
   @override
   void dispose() {
     _lifecycle.dispose();
     widget.state.settings.removeListener(_onSettingsChanged);
-    if (WindowService.isSupported) windowManager.removeListener(this);
+    _stopHearingTheWindow();
     _inFront.dispose();
+    _windows.dispose();
     super.dispose();
   }
 
@@ -246,14 +320,36 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
   /// Square again when the window fills the screen: rounded corners there
   /// leave four notches of desktop at the corners of the display, which is why
   /// every platform squares them off in exactly this case.
-  Widget _rounded(Widget? child) {
+  Widget _rounded(Widget? child, {required ProgramWindow window}) {
     final content = child ?? const SizedBox.shrink();
-    if (!Platform.isLinux || _maximized) return content;
+    // **A detached window is never the maximised one.** The shape is reported
+    // for the first window only — the runner tells Dart about that one, and a
+    // detached window's own news does not arrive yet — so the others are
+    // drawn as the ordinary rounded windows they are.
+    final maximized = window.isMain && _maximized;
+    final cutCorners = Platform.isLinux && !maximized;
     return Stack(
       children: [
         Positioned.fill(child: content),
-        const Positioned.fill(
-          child: IgnorePointer(child: CustomPaint(painter: _CutCorners())),
+        if (cutCorners)
+          const Positioned.fill(
+            child: IgnorePointer(child: CustomPaint(painter: _CutCorners())),
+          ),
+        // **The window has a line round it**, like everything else in it. It
+        // is drawn here rather than by the runner because the three platforms
+        // round the window themselves and none of them will say by how much —
+        // see [windowCornerRadius] for the numbers and how they were got.
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Consumer<SettingsStore>(
+              builder: (context, settings, _) => CustomPaint(
+                painter: _WindowOutline(
+                  colour: settings.appearance.elementColor,
+                  radius: maximized ? 0 : windowCornerRadius(),
+                ),
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -363,9 +459,49 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
     WindowService.reapplyBackdrop(appearance, reason: reason);
   }
 
+  /// What the runner was last told about the inactive opacity, so a settings
+  /// change that is about something else does not resend it.
+  (double, double, Duration)? _toldInactive;
+
+  void _tellInactiveOpacity() {
+    if (!BackdropChannel.fadesWholeWindow) return;
+    final appearance = widget.state.settings.appearance;
+    final told = (
+      appearance.inactiveGlassOpacity,
+      appearance.inactiveInterfaceOpacity,
+      appearance.animated(kWindowFocusFadeDuration),
+    );
+    if (told == _toldInactive) return;
+    _toldInactive = told;
+    unawaited(
+      BackdropChannel.setInactiveOpacity(told.$1, told.$2, told.$3),
+    );
+  }
+
+  /// **How strongly the interface is drawn**, now that the window is or is not
+  /// in front — the drawing's layer of the fade, and nothing of the window's.
+  ///
+  /// Three answers, by how much of the fade the platform's runner could take:
+  ///
+  /// - **macOS** fades the Flutter view itself, per window, so there is
+  ///   nothing to do here and this stays solid.
+  /// - **Windows** has one layered alpha for a whole window and nothing to aim
+  ///   at the drawing alone, so the drawing's half is done here.
+  /// - **Linux** has no native half at all, so the interface carries the whole
+  ///   figure and the backdrop behind it does not move.
+  double _interfaceOpacity(AppearanceSettings appearance,
+      {required bool inFront}) {
+    if (inFront || BackdropChannel.fadesTheDrawing) return 1;
+    if (BackdropChannel.fadesWholeWindow) {
+      return appearance.inactiveInterfaceOpacity;
+    }
+    return appearance.inactiveWindowOpacity;
+  }
+
   /// Re-applies the native backdrop when the user changes it, rather than
   /// making them restart.
   void _onSettingsChanged() {
+    _tellInactiveOpacity();
     final appearance = widget.state.settings.appearance;
     // The panel colour is the backdrop's tint, so it has to re-apply too;
     // otherwise changing the palette leaves the window tinted with the old one.
@@ -378,6 +514,23 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
     _dark = appearance.darkChrome;
     _tint = appearance.panelBackground;
     WindowService.reapplyBackdrop(appearance, reason: 'settings changed');
+    _carryBackdropToTheOthers();
+  }
+
+  /// **A backdrop chosen in the settings is the application's, not one
+  /// window's.** `WindowService` speaks to the window the application started
+  /// in; the windows it opened are told here, so a detached view does not sit
+  /// in the look the application had when it was detached.
+  void _carryBackdropToTheOthers() {
+    if (!XWindow.isAvailable) return;
+    final appearance = widget.state.settings.appearance;
+    for (final window in _windows.all) {
+      if (window.isMain) continue;
+      unawaited(
+        WindowService.applyBackdropTo(appearance,
+            handle: window.nativeHandle),
+      );
+    }
   }
 
   @override
@@ -394,8 +547,51 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
         ChangeNotifierProvider<FileSystemRegistry>.value(
           value: widget.state.fileSystems,
         ),
+        ChangeNotifierProvider<ProgramWindows>.value(value: _windows),
       ],
-      child: Consumer<SettingsStore>(
+      // **Every window the application has, drawn from one tree.** What
+      // stands above this line is inherited widgets and nothing else, which
+      // is the whole rule for being above a set of views: a widget with a
+      // render object of its own has no single tree to draw into. One state,
+      // one set of settings, one plugin registry — and as many windows as
+      // somebody has detached views into. Below here everything belongs to
+      // one window.
+      child: ListenableBuilder(
+        listenable: _windows,
+        builder: (context, _) => ViewCollection(
+          views: [for (final window in _windows.all) _inItsView(window)],
+        ),
+      ),
+    );
+  }
+
+  /// One window, in the view that belongs to it.
+  ///
+  /// The first window's view is the one the runner made and the engine was
+  /// handed; a window the application opened carries its own, and
+  /// `RegularWindow` keeps the two in step.
+  Widget _inItsView(ProgramWindow window) {
+    final root = KeyedSubtree(
+      key: ValueKey(window.id),
+      child: _OneWindow(window: window, app: this),
+    );
+    final controller = window.controller;
+    if (controller == null) {
+      return View(view: firstWindowView(), child: root);
+    }
+    // ignore: invalid_use_of_internal_member
+    return RegularWindow(controller: controller, child: root);
+  }
+
+  /// Everything inside one window: its theme, its pages, its own fade and its
+  /// own outline. Called by [_OneWindow], which is a widget so that each
+  /// window has a place of its own to keep state in.
+  Widget _buildWindow(
+    BuildContext context,
+    ProgramWindow window, {
+    WindowStack? desk,
+  }) {
+    return Consumer<SettingsStore>(
         builder: (context, settings, _) {
           final appearance = settings.appearance;
           final theme = ThemeData(
@@ -432,6 +628,61 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
               // then stop, which is what made going to the settings look like
               // three separate events. See BackdropPageTransitionsBuilder.
               pageTransitionsTheme: kPageTransitions,
+              // **A switch that picks one of a few is an outlined pill**, not
+              // a bright tile. Material's own answer is a block of colour with
+              // corners of its own inside a rounded box — two shapes, neither
+              // agreeing with the other's radius, which at a settings page's
+              // reading distance looks like a sticker stuck onto the control.
+              // One line round all of them, and the chosen one carries a
+              // breath of the accent: enough to say *this one*, and it leaves
+              // the accent to mean what it means everywhere else.
+              segmentedButtonTheme: SegmentedButtonThemeData(
+                style: ButtonStyle(
+                  shape: const WidgetStatePropertyAll(StadiumBorder()),
+                  side: WidgetStatePropertyAll(
+                    BorderSide(color: appearance.chromeRule),
+                  ),
+                  backgroundColor: WidgetStateProperty.resolveWith(
+                    (states) => states.contains(WidgetState.selected)
+                        ? appearance.accentColor.withValues(alpha: 0.22)
+                        : Colors.transparent,
+                  ),
+                  foregroundColor: WidgetStateProperty.resolveWith(
+                    (states) => states.contains(WidgetState.selected)
+                        ? appearance.panelForeground
+                        : appearance.panelForeground.withValues(alpha: 0.7),
+                  ),
+                  overlayColor: const WidgetStatePropertyAll(
+                    Colors.transparent,
+                  ),
+                ),
+              ),
+              // **A scroll bar is a line.** Three pixels at rest, six under
+              // the pointer — narrow, because what it is next to is the thing
+              // being read; and it says where it is by growing rather than by
+              // taking a band of colour along the edge.
+              scrollbarTheme: ScrollbarThemeData(
+                thickness: WidgetStateProperty.resolveWith(
+                  (states) =>
+                      states.contains(WidgetState.hovered) ||
+                          states.contains(WidgetState.dragged)
+                      ? 6.0
+                      : 3.0,
+                ),
+                thumbColor: WidgetStateProperty.resolveWith(
+                  (states) => appearance.panelForeground.withValues(
+                    alpha:
+                        states.contains(WidgetState.hovered) ||
+                            states.contains(WidgetState.dragged)
+                        ? 0.45
+                        : 0.25,
+                  ),
+                ),
+                radius: const Radius.circular(3),
+                crossAxisMargin: 2,
+                mainAxisMargin: 2,
+                interactive: true,
+              ),
           );
 
           return MaterialApp(
@@ -478,25 +729,190 @@ class _XverbAppState extends State<XverbApp> with WindowListener {
                 appearance.uiWeightShift,
               ),
             ),
-            // **A window behind another says so.** On macOS the backdrop now
-            // stays frosted without the focus, so the backdrop no longer tells
-            // the two states apart; the interface itself fades back instead.
+            // **A window behind another says so**, in two layers that
+            // multiply: the window itself steps back half as far as the
+            // interface drawn on it — see `kWindowShareOfTheFade`. The
+            // window's layer is always the runner's; this is the interface's,
+            // and which figure it takes depends on how much the runner could
+            // carry. See [_interfaceOpacity].
+            // **Whether *this* window is in front.** With several windows
+            // the application being in front and this window having the
+            // keyboard are different facts, and the fade means the second
+            // one: a window somebody has just detached a view into must not
+            // be drawn as though it were the one behind.
             builder: (context, child) => ValueListenableBuilder<bool>(
-              valueListenable: _inFront,
+              valueListenable:
+                  window.isMain ? _inFront : window.hasTheKeyboard,
               builder: (context, inFront, content) => AnimatedOpacity(
-                opacity: inFront ? 1 : appearance.inactiveWindowOpacity,
+                opacity: _interfaceOpacity(appearance, inFront: inFront),
                 duration: appearance.animated(kWindowFocusFadeDuration),
                 curve: inFront ? kArrivingCurve : kLeavingCurve,
                 child: content,
               ),
-              child: _rounded(child),
+              child: _rounded(child, window: window),
             ),
-            home: const CommanderScreen(),
+            // **What the window is for.** The first one is the commander; a
+            // window somebody detached a view into shows that view and
+            // nothing else, and never becomes a second file manager.
+            home: window.content == null
+                // The first window: its dialogs are the application's own
+                // desk, offered through the same scope a detached window
+                // offers its own, so nothing has two questions to ask.
+                ? WindowStackScope(
+                    stack: widget.state.windows,
+                    child: const CommanderScreen(),
+                  )
+                // **A window that holds one detached thing.** What "back"
+                // means in it is the window closing, which is what the scope
+                // carries — see [leaveThePage].
+                // **And a desk of its own.** A detached page lives by
+                // itself: what the commander is busy with — a folder being
+                // read, a copy, a question — is the commander's, and never
+                // comes up over a view that was taken out of it.
+                : DetachedWindowScope(
+                    close: () => _windows.close(window),
+                    handle: window.nativeHandle,
+                    child: WindowStackScope(
+                      stack: desk ?? WindowStack(),
+                      child: Builder(builder: window.content!),
+                    ),
+                  ),
           );
         },
-      ),
+      );
+  }
+}
+
+/// One window of the application, as a widget.
+///
+/// It exists so that every window has a place of its own to keep state in —
+/// which, when a window is adopted and sized, is where that happens. What it
+/// draws is the application's, and comes from [_XverbAppState._buildWindow].
+class _OneWindow extends StatefulWidget {
+  const _OneWindow({required this.window, required this.app});
+
+  final ProgramWindow window;
+  final _XverbAppState app;
+
+  @override
+  State<_OneWindow> createState() => _OneWindowState();
+}
+
+class _OneWindowState extends State<_OneWindow> {
+  /// **This window's own focus.** One scope per window, because Flutter's
+  /// focus is one thing for the whole application: the window the platform
+  /// gives the keyboard to is asked for this back, and a scope remembers
+  /// what in it last had it. Owned here because a widget's state is what can
+  /// own a focus node's lifetime.
+  late final FocusScopeNode _focus = FocusScopeNode(
+    debugLabel: 'window ${widget.window.id}',
+  );
+
+  /// **This window's desk**, the stack its internal windows open on. The
+  /// first window's is the application's own; every other window has one of
+  /// its own, owned here for the same reason as the focus.
+  late final WindowStack? _desk =
+      widget.window.isMain ? null : WindowStack();
+
+  @override
+  void initState() {
+    super.initState();
+    final window = widget.window;
+    window.focus = _focus;
+    if (window.isMain) return;
+    // **A window the framework made comes up as the platform's**: its own
+    // title bar over an unpainted view, and none of the application's look.
+    // The runner is the only side holding the window, so it is told where
+    // this one is and does to it what it did to the first — after the first
+    // frame, because the address is good once the window is really there.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final handle = window.nativeHandle;
+      await XWindow.instance.adopt(handle);
+      if (!mounted) return;
+      // Taking the platform's bar off gives the drawing its full height, so
+      // the size is said again in what the application draws.
+      await XWindow.instance
+          .setClientSize(handle, ProgramWindows.defaultSize);
+      if (!mounted) return;
+      await WindowService.applyBackdropTo(
+        context.read<SettingsStore>().appearance,
+        handle: handle,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    if (widget.window.focus == _focus) widget.window.focus = null;
+    _focus.dispose();
+    _desk?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FocusScope(
+        node: _focus,
+        child: widget.app._buildWindow(context, widget.window, desk: _desk),
+      );
+}
+
+/// **How much the platform rounds this window by.**
+///
+/// Nothing reports it, so each number is what the platform actually does: a
+/// line drawn at a smaller radius than the window's has its corner cut off by
+/// the window's own shape, and one drawn at a larger radius pulls inside and
+/// leaves a bare crescent beyond it. Both read as a defect rather than as a
+/// style.
+///
+/// - **macOS** rounds at 16 from Tahoe (major 26) and at 10 before it.
+/// - **Windows 11** rounds at 8; Windows 10 — build below 22000 — does not
+///   round at all, so the line is a rectangle there.
+/// - **Linux** is not rounded by anybody: the corners are ours, cut in
+///   [_CutCorners], and the line follows that radius.
+double windowCornerRadius() {
+  if (Platform.isLinux) return _CutCorners.radius;
+  final version = Platform.operatingSystemVersion;
+  if (Platform.isMacOS) {
+    final major = int.tryParse(
+      RegExp(r'(\d+)').firstMatch(version)?.group(1) ?? '',
+    );
+    return (major ?? 0) >= 26 ? 16 : 10;
+  }
+  final build = int.tryParse(
+    RegExp(r'Build (\d+)').firstMatch(version)?.group(1) ?? '',
+  );
+  return (build ?? 0) >= 22000 ? 8 : 0;
+}
+
+/// The line round the window, drawn over everything and answering no presses.
+///
+/// Inset by half its own width, because a stroke straddles the path it is
+/// given: laid on the window's very edge, half of it would be outside the
+/// shape the platform masks and the line would come out half as strong as
+/// every other line in the window.
+class _WindowOutline extends CustomPainter {
+  const _WindowOutline({required this.colour, required this.radius});
+
+  final Color colour;
+  final double radius;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = (Offset.zero & size).deflate(0.5);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, Radius.circular(radius)),
+      Paint()
+        ..color = colour
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..isAntiAlias = true,
     );
   }
+
+  @override
+  bool shouldRepaint(_WindowOutline old) =>
+      old.colour != colour || old.radius != radius;
 }
 
 /// Takes the four corners out of the window, softly.

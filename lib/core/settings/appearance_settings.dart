@@ -268,9 +268,31 @@ extension PanelDensityMetrics on PanelDensity {
   };
 }
 
-/// The range [AppearanceSettings.inactiveWindowOpacity] is held to.
-const double kInactiveWindowOpacityMin = 0.25;
-const double kInactiveWindowOpacityMax = 0.9;
+/// The range [AppearanceSettings.inactiveWindowOpacity] is held to, and the
+/// same range xConsole's slider spans, so the one setting in the two programs
+/// means the same thing end to end: below the floor a window behind another is
+/// too faint to find again, and at the ceiling it is never quite solid, or the
+/// hint is gone altogether.
+const double kInactiveWindowOpacityMin = 0.3;
+const double kInactiveWindowOpacityMax = 0.95;
+
+/// **How much of the step back the window itself takes**, the interface drawn
+/// on it taking the whole of it.
+///
+/// One figure over the whole window fades glass and interface alike, and that
+/// is not what it looks like: the glass is a blur of the desktop, and thinning
+/// it lets the desktop through *sharp* — a far louder change than the same
+/// figure does to text on a panel. Side by side the background read as fading
+/// harder than the content, the opposite way round from what a window stepping
+/// back should say.
+///
+/// So the fade is two layers that multiply. The window carries half of it,
+/// enough that the glass, the edge and the shadow all say the window is behind
+/// something; the interface carries the rest and ends at
+/// [AppearanceSettings.inactiveWindowOpacity]. **The arithmetic lives here and
+/// nowhere else** — the runners are handed the two figures and apply them.
+/// xConsole holds the same number in `Settings.windowShareOfTheFade`.
+const double kWindowShareOfTheFade = 0.5;
 
 /// Every colour and metric the panels draw with.
 ///
@@ -305,7 +327,14 @@ class AppearanceSettings {
     this.markedColor = const Color(0xFF6BCCE1),
     this.cursorColor = const Color(0xFF2DD4BF),
     this.accentColor = const Color(0xFF2DD4BF),
-    this.headerBackground = const Color(0xFF081313),
+    // The paper, like the panels: the window is one sheet and the strips are
+    // not a colour of their own. It was a shade darker until the head of the
+    // window stopped being a separate object.
+    this.headerBackground = const Color(0xFF0C1A1A),
+    // **The line, which is white on every dark palette.** These defaults are
+    // the release's palette, and the release's palette is a dark one — see
+    // `PaletteSeeds.derive`, which is where the two values live.
+    this.elementColor = const Color(0xFFFFFFFF),
     this.headerForeground = const Color(0xFFEAF0F0),
     this.fontFamily = '',
     this.fileFontFamily = '',
@@ -337,7 +366,11 @@ class AppearanceSettings {
     this.alternateRowShading = true,
     // Light, not dark: a black stripe over a near-black panel is nothing at
     // all — the same reasoning the palette itself carries.
-    this.alternateRowColor = const Color(0x08FFFFFF),
+    // **Nothing.** Every other row used to carry a wash to be counted by;
+    // in a window made of lines it is a stripe across the one thing being
+    // read. The setting stays — a table nobody reads line by line may want
+    // it back — and what it is set to is a colour like any other.
+    this.alternateRowColor = const Color(0x00000000),
     this.darkChrome = true,
     // **The look of the window is part of the release's appearance too** — he
     // chose colours *and* the glass they are seen through. Acrylic behind
@@ -357,7 +390,9 @@ class AppearanceSettings {
     // pair for a menu, the panel's for a console, the panel and the cursor for
     // a window. The shipped look does not move a pixel, and the defaults are
     // now a palette rather than a palette plus seven exceptions.
-    this.menuBackground = const Color(0xFF081313),
+    // The paper, like everything else: a menu is the window's own sheet with
+    // a line round it.
+    this.menuBackground = const Color(0xFF0C1A1A),
     this.menuForeground = const Color(0xFFEAF0F0),
     this.menuBorderColor = const Color(0xFFFFFFFF),
     this.menuBorderWidth = 1,
@@ -463,6 +498,21 @@ class AppearanceSettings {
 
   /// Column header and path bar background.
   final Color headerBackground;
+
+  /// **The line.** Every contour in the window is drawn in this colour: the
+  /// outline round a button, a pill, a field, a table's rule, the frame round
+  /// a panel. The design is lines and inverted colour rather than fills, so
+  /// this is the one colour most of the window is actually drawn with, and it
+  /// has a row of its own like any other — a colour here is something you
+  /// press where it is used.
+  ///
+  /// Derived as the ink laid thinly over the paper, which is what a hairline
+  /// on a sheet is. **One colour at one strength**: the line round the window,
+  /// the rule under a strip and the outline on a control are the same line,
+  /// and a window with two strengths of it reads as a window with two kinds of
+  /// line. [chromeRule] is the name the strips ask for it by.
+  final Color elementColor;
+
 
   /// What is *written* on that background — the column headings, the path, the
   /// status line, the F-key row and the application's own title bar.
@@ -874,6 +924,18 @@ class AppearanceSettings {
   /// unreadable.
   final double inactiveWindowOpacity;
 
+  /// **How see-through the window itself is** while another one has the focus
+  /// — its glass, its edge and its shadow with it, and the shallower of the
+  /// fade's two layers. See [kWindowShareOfTheFade].
+  double get inactiveGlassOpacity =>
+      1 - (1 - inactiveWindowOpacity) * kWindowShareOfTheFade;
+
+  /// **How see-through the interface is** on top of that, so the two multiply
+  /// to [inactiveWindowOpacity] and the interface ends up twice as far back as
+  /// the glass behind it.
+  double get inactiveInterfaceOpacity =>
+      inactiveWindowOpacity / inactiveGlassOpacity;
+
   /// When true the row under the cursor is written in whatever contrasts with
   /// [cursorColor] instead of in its own colour.
   ///
@@ -948,7 +1010,7 @@ class AppearanceSettings {
   /// that the seeds can always be read back off the colours.
   AppearanceSettings pressing(String key, Color colour) => switch (key) {
     'panelBackground' => withSeeds(recipe.seeds.copyWith(paper: colour)),
-    'headerBackground' => withSeeds(recipe.seeds.copyWith(chrome: colour)),
+
     'accentColor' => withSeeds(recipe.seeds.copyWith(accent: colour)),
     _ => recipe.overriding(key, colour.toARGB32()).applyTo(this),
   };
@@ -993,7 +1055,13 @@ class AppearanceSettings {
   /// to see at all. A rule has to read against **both** of the things it
   /// divides, and the two things here are usually two shades of the same
   /// chrome.
-  Color get chromeRule => headerForeground.withValues(alpha: 0.3);
+  /// **One line colour in the window.** The rule under a strip, the frame
+  /// round a thing and the outline on a control are the same line and are
+  /// drawn in [elementColor]; this stays as the name the strips ask for it
+  /// by. It used to be the header's ink at three tenths — an alpha chosen
+  /// per place, which is how a window ends up with four greys that are
+  /// nearly the same.
+  Color get chromeRule => elementColor;
 
   /// Corner radius of the selection — the ring that marks the active panel.
   ///
@@ -1181,6 +1249,7 @@ class AppearanceSettings {
     Color? cursorColor,
     Color? accentColor,
     Color? headerBackground,
+    Color? elementColor,
     Color? headerForeground,
     String? fontFamily,
     String? fileFontFamily,
@@ -1240,6 +1309,7 @@ class AppearanceSettings {
       cursorColor: cursorColor ?? this.cursorColor,
       accentColor: accentColor ?? this.accentColor,
       headerBackground: headerBackground ?? this.headerBackground,
+      elementColor: elementColor ?? this.elementColor,
       headerForeground: headerForeground ?? this.headerForeground,
       fontFamily: fontFamily ?? this.fontFamily,
       fileFontFamily: fileFontFamily ?? this.fileFontFamily,
@@ -1316,6 +1386,12 @@ class AppearanceSettings {
     'cursorColor': cursorColor.toARGB32(),
     'accentColor': accentColor.toARGB32(),
     'headerBackground': headerBackground.toARGB32(),
+    'elementColor': elementColor.toARGB32(),
+    // **The mark that this file was written by the one-sheet application.**
+    // A file without it carries a window divided by colour — a chrome on the
+    // strips, a menu made of something else again — and is brought over to
+    // the one sheet as it is read. See [fromJson].
+    'monolith': 1,
     'headerForeground': headerForeground.toARGB32(),
     'fontFamily': fontFamily,
     'fileFontFamily': fileFontFamily,
@@ -1391,15 +1467,27 @@ class AppearanceSettings {
     // was in force, and inheriting what was in force is the same rule the
     // reading pair was migrated by.
     final panelBackground = color('panelBackground', defaults.panelBackground);
-    final headerBackground = color(
-      'headerBackground',
-      defaults.headerBackground,
-    );
-    final headerForeground = color(
-      'headerForeground',
-      defaults.headerForeground,
-    );
+
+    // **The window became one sheet, and old files are brought over to it.**
+    // The strips used to carry a colour of their own — the whole point of a
+    // chrome seed — and a window whose head is a different shade from its
+    // body reads as two objects, one laid over the other. There is no row for
+    // it any more, so a file written before this change would otherwise keep
+    // its old bar for ever with nothing to put it back.
+    //
+    // A file written before the change is the one with no element colour in
+    // it: the same way the three `*FollowsPalette` flags were read once and
+    // turned into what they stood for.
+    final beforeTheOneSheet = json['monolith'] != 1;
+    final headerBackground = beforeTheOneSheet
+        ? panelBackground
+        : color('headerBackground', defaults.headerBackground);
     final panelForeground = color('panelForeground', defaults.panelForeground);
+    // The ink goes with the sheet it is written on: a header ink chosen to be
+    // read on a dark strip is not the ink for the paper that strip became.
+    final headerForeground = beforeTheOneSheet
+        ? panelForeground
+        : color('headerForeground', defaults.headerForeground);
     final cursorColor = color('cursorColor', defaults.cursorColor);
 
     // Only a file from before the flags went is read as having them.
@@ -1436,6 +1524,7 @@ class AppearanceSettings {
       cursorColor: cursorColor,
       accentColor: color('accentColor', defaults.accentColor),
       headerBackground: headerBackground,
+      elementColor: color('elementColor', defaults.elementColor),
       headerForeground: headerForeground,
       fontFamily: json['fontFamily'] as String? ?? defaults.fontFamily,
       fileFontFamily:
@@ -1490,7 +1579,12 @@ class AppearanceSettings {
       showGridLines: json['showGridLines'] as bool? ?? defaults.showGridLines,
       alternateRowShading:
           json['alternateRowShading'] as bool? ?? defaults.alternateRowShading,
-      alternateRowColor: color('alternateRowColor', defaults.alternateRowColor),
+      // The stripe under every second row goes with the rest of it: a file
+      // written before the one sheet carries one, and a listing is read line
+      // by line, not counted in pairs.
+      alternateRowColor: beforeTheOneSheet
+          ? defaults.alternateRowColor
+          : color('alternateRowColor', defaults.alternateRowColor),
       darkChrome: json['darkChrome'] as bool? ?? defaults.darkChrome,
       backdrop: WindowBackdrop.values.firstWhere(
         (b) => b.name == json['backdrop'],
@@ -1498,11 +1592,14 @@ class AppearanceSettings {
       ),
       panelOpacity:
           (json['panelOpacity'] as num?)?.toDouble() ?? defaults.panelOpacity,
-      menuBackground: menuFollows
-          ? headerBackground
+      // A menu is the window's own sheet now, so a file from before that —
+      // whatever it had in it, including a white menu somebody pressed while
+      // the colour still meant something else — comes over with the rest.
+      menuBackground: beforeTheOneSheet || menuFollows
+          ? panelBackground
           : color('menuBackground', defaults.menuBackground),
-      menuForeground: menuFollows
-          ? headerForeground
+      menuForeground: beforeTheOneSheet || menuFollows
+          ? panelForeground
           : color('menuForeground', defaults.menuForeground),
       menuBorderColor: color('menuBorderColor', defaults.menuBorderColor),
       menuMonolith: json['menuMonolith'] as bool? ?? defaults.menuMonolith,

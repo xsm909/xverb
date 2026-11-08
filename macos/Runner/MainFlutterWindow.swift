@@ -4,14 +4,52 @@ import AudioToolbox
 import Cocoa
 import FlutterMacOS
 
-class MainFlutterWindow: NSWindow, NSDraggingDestination {
+class MainFlutterWindow: NSWindow, NSDraggingDestination, NSWindowDelegate {
+  /// The engine every window of the application draws into.
+  ///
+  /// **Made here rather than by the view controller**, and the order below is
+  /// the whole reason. A `FlutterViewController()` with no engine makes one of
+  /// its own and owns that engine's single implicit view; an engine like that
+  /// refuses every window after the first — *"Multiview can only be enabled
+  /// before adding any view controllers"* — and several windows on one engine
+  /// is the whole of detaching a view, because a second engine is a second
+  /// isolate and none of the state would cross it.
+  ///
+  /// So: the engine first, run before any view exists (a view cannot be added
+  /// to an engine that is not running), then the controller on it, then the
+  /// window, then the plugins — with no return to the run loop in between, so
+  /// Dart's first platform message finds the window and the plugins already
+  /// there.
+  private(set) var engine: FlutterEngine!
+
   override func awakeFromNib() {
-    let flutterViewController = FlutterViewController()
+    let engine = FlutterEngine(
+      name: "xverb", project: nil, allowHeadlessExecution: true)
+    self.engine = engine
+
+    // **Several views on one engine, switched on before any of them exists.**
+    // The selector is not in the public header — this is the experimental
+    // side of Flutter, leaned on deliberately — and the engine refuses the
+    // call once a view controller has been attached, which is why it is here
+    // and not three lines down. Without it the first detached window throws
+    // "Multiview can only be enabled before adding any view controllers".
+    let enableMultiView = Selector(("enableMultiView"))
+    if engine.responds(to: enableMultiView) {
+      engine.perform(enableMultiView)
+    } else {
+      NSLog("xverb: this engine has no enableMultiView; one window only")
+    }
+
+    _ = engine.run(withEntrypoint: nil)
+
+    let flutterViewController = FlutterViewController(
+      engine: engine, nibName: nil, bundle: nil)
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    BackdropChannel.register(with: flutterViewController)
     ShellChannel.register(with: flutterViewController)
     AudioChannel.register(with: flutterViewController)
     TransferChannel.register(with: flutterViewController)
@@ -32,7 +70,52 @@ class MainFlutterWindow: NSWindow, NSDraggingDestination {
     flutterViewController.view.unregisterDraggedTypes()
     registerForDraggedTypes([.fileURL])
 
+    // **The window is the application's own from here on**, and this side is
+    // what makes it so: no bar of the platform's, hidden until there is
+    // something painted to put in it, glass when the appearance asks for it,
+    // and the three buttons answered where the `NSWindow` is in hand. See
+    // [WindowChannel] for why none of that can be left to a plugin.
+    WindowChannel.attach(window: self, engine: engine)
+
+    // **The delegate is the window itself.** A window hands its dragging
+    // messages to its delegate when the delegate answers them and to itself
+    // otherwise, so a separate delegate object would have quietly taken the
+    // drops away from the methods below. Everything the delegate hears is
+    // handed straight to [WindowChannel].
+    self.delegate = self
+
     super.awakeFromNib()
+  }
+
+  // --- What the window does on its own, told to Dart ------------------------
+
+  /// **Closing is an ask, not an act.** The application has the folder
+  /// history, the plugin processes and the settings to write down, so Dart is
+  /// told and the window stays; whoever answers calls `destroy` when it is
+  /// done. This covers the platform's own ways out — Cmd+W, the menu — as
+  /// well as our own button, which goes through the same place.
+  func windowShouldClose(_ sender: NSWindow) -> Bool {
+    WindowChannel.closing(sender)
+    return false
+  }
+
+  func windowDidBecomeKey(_ notification: Notification) {
+    WindowChannel.front(self, true)
+  }
+
+  func windowDidResignKey(_ notification: Notification) {
+    WindowChannel.front(self, false)
+  }
+
+  /// The shape is reported rather than the event: "something changed" is not
+  /// enough to know whether the window now fills the screen, and a restore
+  /// can land on either shape depending on what the window was before.
+  func windowDidResize(_ notification: Notification) {
+    WindowChannel.shapeChanged(self)
+  }
+
+  func windowDidDeminiaturize(_ notification: Notification) {
+    WindowChannel.shapeChanged(self)
   }
 
   // --- Files arriving from the desktop --------------------------------------
@@ -59,6 +142,136 @@ class MainFlutterWindow: NSWindow, NSDraggingDestination {
 
   func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
     return TransferChannel.drop(sender)
+  }
+}
+
+/// The `xverb/backdrop` channel, macOS side: **how far a window not in front
+/// steps back**, and how long it takes to get there.
+///
+/// The rest of that channel is the Windows runner's — the composition accent
+/// behind a frameless window, which has no counterpart here, since the Mac's
+/// backdrop is `flutter_acrylic`'s business. So this answers the one call the
+/// two platforms share and reports the others as not implemented; the Dart
+/// side only sends that one, behind `BackdropChannel.fadesWholeWindow`.
+///
+/// **The window and the drawing on it fade by different figures**, and the two
+/// multiply. The window's `alphaValue` carries the glass, the edge and the
+/// shadow; the Flutter view's carries the interface, on top of that, and the
+/// pair ends at what the setting asks for. One figure over everything is what
+/// was tried first and it looks wrong: the glass is a blur of the desktop, and
+/// thinning it lets the desktop through *sharp*, so the background reads as
+/// fading harder than the content. The arithmetic behind the pair is Dart's —
+/// `kWindowShareOfTheFade` in `core/settings/appearance_settings.dart`.
+///
+/// **The Flutter view is a subview, not the content view.** `flutter_acrylic`
+/// hands the window to `macos_window_utils`, which makes the content view an
+/// `NSVisualEffectView` — the glass — and puts the Flutter view inside it, as
+/// the view of a child controller of its own. So `contentViewController` is no
+/// longer a `FlutterViewController` once the backdrop is up, and a guard that
+/// asked for one found no window of the program's to fade and did nothing at
+/// all, silently. See [flutterView].
+///
+/// Written in this file for the reason [ShellChannel] gives: a new file means
+/// editing the Xcode project.
+enum BackdropChannel {
+  /// How see-through a window not in front is, 1 for not at all, in the two
+  /// layers it is made of — the window itself and the drawing on it — and how
+  /// long it takes to get there. All three are the appearance settings',
+  /// resent whenever they change, and held here because a window made later
+  /// has to be given them too.
+  private static var inactiveGlass: CGFloat = 1
+  private static var inactiveDrawing: CGFloat = 1
+  private static var fade: TimeInterval = 0.24
+
+  /// Whether the front is already being watched, so a second engine — a
+  /// second view of the same program — does not add the observers twice and
+  /// fade everything twice over.
+  private static var watching = false
+
+  static func register(with controller: FlutterViewController) {
+    let channel = FlutterMethodChannel(
+      name: "xverb/backdrop",
+      binaryMessenger: controller.engine.binaryMessenger)
+
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "inactiveOpacity":
+        let args = call.arguments as? [String: Any] ?? [:]
+        func figure(_ key: String) -> CGFloat {
+          CGFloat(min(max((args[key] as? NSNumber)?.doubleValue ?? 1, 0.1), 1))
+        }
+        inactiveGlass = figure("value")
+        inactiveDrawing = figure("content")
+        if let ms = (args["ms"] as? NSNumber)?.doubleValue, ms >= 0 {
+          fade = ms / 1000
+        }
+        // Whatever is already behind another window goes to the new figure at
+        // once, with the same fade, so the slider can be seen doing something
+        // while it is being dragged rather than only the next time the window
+        // loses the keyboard.
+        for window in NSApp.windows { fadeToWhereItBelongs(window) }
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    watchTheFront()
+  }
+
+  /// **The fade hangs on the notifications, not on the window's own
+  /// `becomeKey`.** `object: nil` hears about every window the program has,
+  /// including any it makes later, and the window class itself then has
+  /// nothing to carry.
+  private static func watchTheFront() {
+    if watching { return }
+    watching = true
+    for name in [
+      NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+    ] {
+      NotificationCenter.default.addObserver(
+        forName: name, object: nil, queue: .main
+      ) { note in
+        guard let window = note.object as? NSWindow else { return }
+        fadeToWhereItBelongs(window)
+      }
+    }
+  }
+
+  /// Fades [window] to full strength or to the inactive figures, by where it
+  /// stands now. Windows that are not the program's own are left alone.
+  private static func fadeToWhereItBelongs(_ window: NSWindow) {
+    guard let drawing = flutterView(in: window) else { return }
+    let behind: CGFloat = window.isKeyWindow ? 1 : inactiveGlass
+    let front: CGFloat = window.isKeyWindow ? 1 : inactiveDrawing
+    if abs(window.alphaValue - behind) < 0.001,
+      abs(drawing.alphaValue - front) < 0.001
+    { return }
+    drawing.wantsLayer = true
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = fade
+      context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      window.animator().alphaValue = behind
+      drawing.animator().alphaValue = front
+    }
+  }
+
+  /// **The view the program draws into**, or nil for a window that is not the
+  /// program's.
+  ///
+  /// Both arrangements are answered: the plain one, where the Flutter
+  /// controller is the window's own, and the one `macos_window_utils` leaves
+  /// behind once the backdrop is up, where the content view is the glass and
+  /// the Flutter controller is a child of its controller. Asking for the glass
+  /// by class would tie this to that package; asking for the Flutter
+  /// controller does not.
+  private static func flutterView(in window: NSWindow) -> NSView? {
+    guard let root = window.contentViewController else { return nil }
+    if let flutter = root as? FlutterViewController { return flutter.view }
+    for child in root.children {
+      if let flutter = child as? FlutterViewController { return flutter.view }
+    }
+    return nil
   }
 }
 
@@ -937,4 +1150,435 @@ final class DragSource: NSObject, NSDraggingSource {
   ) {
     ended(operation, screenPoint)
   }
+}
+
+/// The `xverb/window` channel, macOS side: **the window itself, done here
+/// rather than asked of a plugin.**
+///
+/// **Why this exists.** The window used to be `window_manager`'s and the
+/// backdrop `flutter_acrylic`'s, and both are plugins. A plugin reaches its
+/// window through `registrar.view?.window` — and the moment the engine is told
+/// to accept several views there is no such view: `window_manager` force
+/// unwraps it and the application dies inside `ensureInitialized()`, before a
+/// single frame, with *Swift runtime failure: force unwrapped a nil value*.
+/// Measured here on 3.47.2. Several views is the whole of detaching a view
+/// into a window of its own, so the window layer stops being a plugin and
+/// lives where the `NSWindow` is in hand and nothing has to answer anything.
+///
+/// It does four jobs: the window wears no bar of the platform's, it stays
+/// hidden until Flutter has painted, it is made of glass as the appearance
+/// asks, and the three buttons and the drag act on it. The fade of a window
+/// that is not in front is [BackdropChannel]'s and stays there.
+///
+/// Written in this file for the reason [ShellChannel] gives: a new file means
+/// editing the Xcode project.
+enum WindowChannel {
+  private static var channel: FlutterMethodChannel?
+  private static weak var main: NSWindow?
+
+  /// The glass behind each window, by the window it is in. **Not one field:**
+  /// the application is about to have more than one window, and the second
+  /// one asking for glass must not be handed the first one's.
+  private static var glass: [ObjectIdentifier: NSVisualEffectView] = [:]
+
+  /// The shape last told to Dart, so a resize that changes nothing — and
+  /// AppKit sends a great many — costs no message.
+  private static var toldMaximized: Bool?
+
+  /// What the window comes up as. The same figures the `WindowOptions` it
+  /// replaces carried, so nothing about the first frame moves.
+  private static let startSize = NSSize(width: 1280, height: 800)
+  private static let floorSize = NSSize(width: 640, height: 420)
+
+  /// The engine, for the one thing that cannot be asked of it through a
+  /// channel: where its text input lives. See [carryTextInput].
+  private static weak var engine: FlutterEngine?
+
+  static func attach(window: NSWindow, engine: FlutterEngine) {
+    main = window
+    self.engine = engine
+    let channel = FlutterMethodChannel(
+      name: "xverb/window", binaryMessenger: engine.binaryMessenger)
+    channel.setMethodCallHandler { call, result in
+      handle(call, result)
+    }
+    self.channel = channel
+
+    strip(window)
+    // **AppKit restores a window's frame, and it does it after this.** The
+    // size set here came out as 1089 wide on the first run of this code,
+    // because state restoration put back the frame of an older session once
+    // `awakeFromNib` had returned — where the package this replaces set the
+    // size from Dart, long after restoration, and so never saw it. The window
+    // is told not to be restored at all, and the size is said again at `show`,
+    // which is after everything AppKit does on its own.
+    window.isRestorable = false
+    window.setContentSize(startSize)
+    window.center()
+    // **Hidden until there is something painted to put in it.** A window that
+    // comes up grey and fills a moment later is the application jumping in
+    // front of whoever opened it. `show` is sent after the first frame.
+    window.orderOut(nil)
+
+    // **Typed text follows the keyboard.** The first window is given it now,
+    // because it may take the keyboard before anything is listening.
+    NotificationCenter.default.addObserver(
+      forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+    ) { note in
+      guard let became = note.object as? NSWindow else { return }
+      carryTextInput(to: became)
+      tellWhoHasTheKeyboard()
+    }
+    // And when one gives it up, so that the application can say which window
+    // has it now — or that none of them has. Asked on the next turn, because
+    // at this moment the window that is taking it has not taken it yet.
+    NotificationCenter.default.addObserver(
+      forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
+    ) { _ in
+      DispatchQueue.main.async { tellWhoHasTheKeyboard() }
+    }
+    carryTextInput(to: window)
+    // **Held, not set once**: see [point].
+    Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+      mindTextInput()
+    }
+  }
+
+  // --- Which window is being typed into ------------------------------------
+
+  /// **Says which window has the keyboard, by the address Dart knows it by.**
+  ///
+  /// Flutter keeps one focus for the whole application rather than one per
+  /// window: every key goes to whatever took the focus last, wherever that
+  /// is. So a view detached into a window of its own took the focus with it,
+  /// and from then on the commander's own keys — F3, Ctrl+Q — were acted on
+  /// by the detached window while the hand was in the first one. Measured,
+  /// not read: the focus was in view 2 while view 1 was the window being
+  /// typed into.
+  ///
+  /// The platform knows which window that is, so it says so and Dart moves
+  /// the focus there. Zero is the window the application started in; no
+  /// address at all means no window of ours has the keyboard.
+  private static func tellWhoHasTheKeyboard() {
+    var args: [String: Any] = [:]
+    if let key = NSApp.keyWindow, flutterController(in: key) != nil {
+      args["handle"] = NSNumber(value: addressOf(key))
+    }
+    channel?.invokeMethod("keyboard", arguments: args)
+  }
+
+  /// The number Dart holds a window by — the same pointer the windowing API
+  /// handed it, which is how [named] finds a window again. The window the
+  /// application started in has no such address on the Dart side, so it is
+  /// nought.
+  private static func addressOf(_ window: NSWindow) -> UInt {
+    if window === main { return 0 }
+    return UInt(bitPattern: Unmanaged.passUnretained(window).toOpaque())
+  }
+
+  // --- Where typed text is turned into text --------------------------------
+
+  /// **The embedder keeps one text input view and puts it in the window of
+  /// the controller it calls the application's own** — the implicit view's.
+  /// With several views on the engine there is no such controller, so that
+  /// view is left in no window at all: every letter typed goes nowhere, while
+  /// the keys themselves arrive as usual and everything looks alive. A rename
+  /// box nobody can type into.
+  ///
+  /// So it is carried. The window that takes the keyboard takes it, which is
+  /// the only arrangement that can be right with more than one window: there
+  /// is one such view and only one window is being typed into.
+  private static func carryTextInput(to window: NSWindow) {
+    guard let controller = flutterController(in: window),
+      let content = window.contentView,
+      let plugin = textInput
+    else { return }
+    if plugin.superview !== content {
+      plugin.removeFromSuperview()
+      content.addSubview(plugin)
+    }
+    point(plugin, at: controller)
+  }
+
+  /// **Which window's key presses it is passing on.** The view keeps this
+  /// inside itself and the embedder sets it from the controller it calls the
+  /// application's own — which, with several views, does not exist. It is
+  /// also cleared from inside a private method, with no moment to hook, so it
+  /// is held rather than set once: every press that arrives while it is empty
+  /// is a press the application never hears.
+  private static func point(_ plugin: NSView, at controller: FlutterViewController) {
+    for name in ["currentViewController", "originalViewController"] {
+      guard class_getInstanceVariable(type(of: plugin), "_" + name) != nil
+      else { continue }
+      plugin.setValue(controller, forKey: name)
+    }
+  }
+
+  /// Puts the text input back in order if it has been emptied: it belongs to
+  /// the window that has the keyboard, pointed at that window's controller.
+  private static func mindTextInput() {
+    guard let key = NSApp.keyWindow, flutterController(in: key) != nil,
+      let plugin = textInput
+    else { return }
+    if plugin.superview !== key.contentView
+      || plugin.value(forKey: "currentViewController") == nil
+    {
+      carryTextInput(to: key)
+    }
+  }
+
+  /// The embedder's text input view, which is in no header. A version of
+  /// Flutter that renames it costs this application its typing, and nothing
+  /// else — which is why it is read through a selector that may answer
+  /// nothing rather than assumed.
+  private static var textInput: NSView? {
+    let name = Selector(("textInputPlugin"))
+    guard let engine = engine, engine.responds(to: name) else { return nil }
+    return engine.perform(name)?.takeUnretainedValue() as? NSView
+  }
+
+  /// What the window is made of, for the log on the Dart side.
+  ///
+  /// **Because the window cannot be photographed from outside.** macOS will
+  /// not hand a screen capture to a script without the permission, and
+  /// `CGWindowListCreateImage` is gone, so the window is asked to describe
+  /// itself instead: the material behind it, whether it is opaque, and
+  /// whether the glass really is below the drawing. Cheap, and the one check
+  /// that the backdrop is what it claims.
+  private static func describe(_ window: NSWindow) -> String {
+    let key = ObjectIdentifier(window)
+    guard let effect = glass[key] else { return "no glass" }
+    let frame = window.contentView?.superview
+    let below =
+      (frame?.subviews.firstIndex(of: effect)).map { $0 == 0 } ?? false
+    return
+      "material=\(effect.material.rawValue) state=\(effect.state.rawValue) "
+      + "opaque=\(window.isOpaque) belowDrawing=\(below) "
+      + "size=\(Int(effect.frame.width))x\(Int(effect.frame.height))"
+  }
+
+  /// The application's own look on a window: **no bar and no buttons of the
+  /// platform's**, because the title bar is drawn in Dart on every desktop,
+  /// and a floor under how small it may be made.
+  private static func strip(_ window: NSWindow) {
+    window.styleMask.insert(.fullSizeContentView)
+    window.titlebarAppearsTransparent = true
+    window.titleVisibility = .hidden
+    window.standardWindowButton(.closeButton)?.isHidden = true
+    window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+    window.standardWindowButton(.zoomButton)?.isHidden = true
+    // The bar is dragged from the press Dart saw; a window that also moved
+    // when its background was dragged would move twice.
+    window.isMovableByWindowBackground = false
+    window.minSize = floorSize
+  }
+
+  private static func handle(
+    _ call: FlutterMethodCall, _ result: @escaping FlutterResult
+  ) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    // **Which window is being spoken about.** A call with no address is about
+    // the window the application started in, which this side holds; a call
+    // with one is about a window the framework made, whose address only the
+    // windowing API knows — so Dart sends it across and the window is found
+    // from it. The address is good only while that window is alive, which is
+    // why it is read and used in the same breath rather than kept.
+    guard let window = named(args) else {
+      result(nil)
+      return
+    }
+    switch call.method {
+    case "adopt":
+      // A window the framework made comes up wearing the platform's bar and
+      // none of the application's look. This side is the only one holding an
+      // `NSWindow`, so it is told where the new one is and does to it what it
+      // did to the first.
+      strip(window)
+      result(nil)
+    case "setClientSize":
+      // The windowing API's own size is the frame's, worked out with a bar
+      // this application has taken off, so it comes out a bar's height wrong.
+      if let size = sized(args) { setContent(window, size) }
+      result(nil)
+    case "handle":
+      result(
+        NSNumber(
+          value: UInt(bitPattern: Unmanaged.passUnretained(window).toOpaque())))
+    case "show":
+      // The size is said here as well as at birth: see [attach] on the frame
+      // AppKit restores behind our back.
+      if window.frame.size != startSize {
+        window.setContentSize(startSize)
+        window.center()
+      }
+      window.makeKeyAndOrderFront(nil)
+      NSApp.activate(ignoringOtherApps: true)
+      result(nil)
+    case "raise":
+      // One view is one thing wherever it is: asked for again while it is
+      // already in a window of its own, that window comes forward rather
+      // than a second copy being made.
+      window.makeKeyAndOrderFront(nil)
+      NSApp.activate(ignoringOtherApps: true)
+      result(nil)
+    case "minimize":
+      window.miniaturize(nil)
+      result(nil)
+    case "toggleMaximize":
+      window.zoom(nil)
+      result(nil)
+    case "isMaximized":
+      result(window.isZoomed)
+    case "requestClose":
+      // Through the platform, not around it: `performClose` is what the menu
+      // and Cmd+W do, so the one way out is the one that is tested.
+      window.performClose(nil)
+      result(nil)
+    case "destroy":
+      window.delegate = nil
+      window.close()
+      result(nil)
+    case "startDrag":
+      // The event the press came in on is the one the window is dragged by;
+      // without it Cocoa has nothing to follow.
+      if let event = NSApp.currentEvent { window.performDrag(with: event) }
+      result(nil)
+    case "backdrop":
+      setGlass(
+        on: window,
+        backdrop: (args["backdrop"] as? NSNumber)?.intValue ?? 0)
+      result(describe(window))
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  /// The backdrop, as the four the settings offer.
+  ///
+  /// **The same materials the package used**, so the window looks exactly as
+  /// it did: `flutter_acrylic` on macOS ignores the colour and the dark flag
+  /// it is handed and sets a material and nothing else — `windowBackground`
+  /// for opaque, `fullScreenUI` for acrylic and for mica, and
+  /// `underWindowBackground` for transparent. Those are
+  /// `WindowEffectToMaterialConverter`'s own answers, read rather than
+  /// guessed, and they are repeated here.
+  ///
+  /// **The glass goes behind everything Flutter draws.** The view Flutter
+  /// paints into *is* the window's content view, so an effect view added
+  /// inside it would sit over the drawing rather than under it; the one place
+  /// truly behind is the frame the window hangs its content on. That is also
+  /// what keeps the fade in [BackdropChannel] honest — the content's alpha
+  /// reaches the drawing alone and the glass is the window's to carry.
+  ///
+  /// **It is held active.** The effect view follows the window's own state by
+  /// default, so the application went flat the moment another window took the
+  /// keyboard; held active it stays frosted whichever window is in front.
+  private static func setGlass(on window: NSWindow, backdrop: Int) {
+    let material: NSVisualEffectView.Material
+    switch backdrop {
+    case 1, 2: material = .fullScreenUI  // acrylic, mica
+    case 3: material = .underWindowBackground  // transparent
+    default: material = .windowBackground  // opaque
+    }
+
+    // Nothing shows where Flutter has not drawn: the view it paints into is
+    // opaque until it is told not to be, and an opaque metal layer with
+    // nothing behind it is black.
+    window.isOpaque = false
+    window.backgroundColor = .clear
+    let painter = flutterController(in: window)
+    painter?.backgroundColor = .clear
+
+    guard let content = window.contentView else { return }
+    content.wantsLayer = true
+    content.layer?.backgroundColor = NSColor.clear.cgColor
+
+    let key = ObjectIdentifier(window)
+    if let had = glass[key] {
+      had.material = material
+      return
+    }
+    guard let frame = content.superview else { return }
+    let effect = WindowGlass()
+    effect.material = material
+    effect.blendingMode = .behindWindow
+    effect.state = .active
+    effect.frame = frame.bounds
+    effect.autoresizingMask = [.width, .height]
+    frame.addSubview(effect, positioned: .below, relativeTo: nil)
+    glass[key] = effect
+  }
+
+  /// The window a call is about: the application's first, or one the
+  /// framework made and handed Dart the address of.
+  private static func named(_ args: [String: Any]) -> NSWindow? {
+    guard let address = (args["handle"] as? NSNumber)?.uintValue else {
+      return main
+    }
+    guard let pointer = UnsafeRawPointer(bitPattern: address) else { return nil }
+    return Unmanaged<NSWindow>.fromOpaque(pointer).takeUnretainedValue()
+  }
+
+  private static func sized(_ args: [String: Any]) -> NSSize? {
+    guard let w = (args["width"] as? NSNumber)?.doubleValue,
+      let h = (args["height"] as? NSNumber)?.doubleValue,
+      w > 0, h > 0
+    else { return nil }
+    return NSSize(width: w, height: h)
+  }
+
+  /// The size of what the application draws, **with the window's top left
+  /// kept where it is**. Cocoa measures a window from its bottom left, so a
+  /// window simply given a new size grows downwards off its own head.
+  private static func setContent(_ window: NSWindow, _ size: NSSize) {
+    let top = window.frame.maxY
+    window.setContentSize(size)
+    var frame = window.frame
+    frame.origin.y = top - frame.height
+    window.setFrame(frame, display: true)
+  }
+
+  private static func flutterController(
+    in window: NSWindow
+  ) -> FlutterViewController? {
+    guard let root = window.contentViewController else { return nil }
+    if let flutter = root as? FlutterViewController { return flutter }
+    for child in root.children {
+      if let flutter = child as? FlutterViewController { return flutter }
+    }
+    return nil
+  }
+
+  // --- What the window says about itself ------------------------------------
+
+  static func closing(_ window: NSWindow) {
+    guard window === main else { return }
+    channel?.invokeMethod("closing", arguments: nil)
+  }
+
+  static func front(_ window: NSWindow, _ inFront: Bool) {
+    guard window === main else { return }
+    channel?.invokeMethod(inFront ? "focus" : "blur", arguments: nil)
+  }
+
+  static func shapeChanged(_ window: NSWindow) {
+    guard window === main else { return }
+    let maximized = window.isZoomed
+    if toldMaximized == maximized { return }
+    toldMaximized = maximized
+    channel?.invokeMethod("shape", arguments: ["maximized": maximized])
+  }
+}
+
+/// The glass under the application.
+///
+/// **It must be blind to the hand.** A plain `NSVisualEffectView` tells AppKit
+/// that a press on it may move the window, and AppKit takes it at its word:
+/// every press anywhere in the window would go into dragging the window and
+/// the application would never be told. It is decoration, so it refuses the
+/// hit test outright and the hand always reaches what is drawn above it.
+private final class WindowGlass: NSVisualEffectView {
+  override var mouseDownCanMoveWindow: Bool { false }
+
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

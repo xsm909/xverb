@@ -36,6 +36,9 @@ import '../widgets/escape_to_pop.dart';
 import '../widgets/keyboard_scrollable.dart';
 import '../widgets/slide_panel.dart';
 import '../widgets/title_bar.dart';
+import '../windows/detach.dart';
+import '../windows/detached_window.dart' show leaveThePage;
+import '../windows/window_dialogs.dart';
 import '../windows/window_layer.dart';
 import 'audio_view.dart';
 import 'code_syntax.dart';
@@ -158,6 +161,28 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     _strip = context.read<SettingsStore>().filmStripOpen;
     _findDescriber();
     _load();
+  }
+
+  /// **Takes the reading into a window of its own.**
+  ///
+  /// Not a hand-over: what a reading holds — where you are in the file, which
+  /// viewer, what is open beside it — is this widget's own state, and widget
+  /// state does not cross from one view to another. So the same file is
+  /// opened again over there, where it comes up on the page it was left at,
+  /// because where you stopped is remembered by the application and not by
+  /// this page. The file on screen, which is not necessarily the one the page
+  /// was opened with: a reading that has been walked along a folder detaches
+  /// what it is showing.
+  void _detach() {
+    if (!canDetach) return;
+    detachReading(
+      context,
+      entry: _entry,
+      viewers: _viewers,
+      initialIndex: _viewers.indexOf(_viewer).clamp(0, _viewers.length - 1),
+      siblings: widget.siblings,
+    );
+    leaveThePage(context);
   }
 
   /// Whether what is on screen is a document read as text — what a viewer
@@ -563,7 +588,9 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
     // Said on the size line when the viewer only read part of the file.
     final cut = ' · ${tr('truncated')}';
 
-    return EscapeToPop(
+    return _DetachKey(
+      onDetach: canDetach ? _detach : null,
+      child: EscapeToPop(
       // Escape unwinds one thing at a time: the panel's own filter and the
       // panel itself are answered inside it while it holds the keyboard; from
       // the text, an open panel is what Escape means before leaving.
@@ -593,8 +620,13 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
               leading: [
                 TitleBarButton(
                   icon: Icons.arrow_back,
-                  tooltip: tr('Back'),
-                  onPressed: Navigator.of(context).pop,
+                  // In a window of its own there is nothing underneath to go
+                  // back to, and the arrow closes the window — the same
+                  // gesture, the same place. See [leaveThePage].
+                  tooltip: Navigator.of(context).canPop()
+                      ? tr('Back')
+                      : tr('Close the window'),
+                  onPressed: () => leaveThePage(context),
                 ),
               ],
               title: Text(
@@ -603,6 +635,17 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                 style: TitleBar.titleStyle(theme),
               ),
               actions: [
+                // **Into a window of its own**, where there is a machine that
+                // can hold one. The reading opens again over there, on the
+                // page it was left at — see [detachReading] — and this page
+                // closes behind it.
+                if (canDetach && Navigator.of(context).canPop())
+                  TitleBarButton(
+                    icon: Icons.open_in_new,
+                    tooltip:
+                        '${tr('Open in a window of its own')}  Ctrl+Shift+D',
+                    onPressed: _detach,
+                  ),
                 // The structure, for the hand that reached for the mouse. The
                 // key is the way in — this is the same door with a handle on
                 // it, and it is only offered where there is something to read
@@ -713,7 +756,7 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
                   canRequestFocus: false,
                   onKeyEvent: _onPageKey,
                   child: WindowLayer(
-                stack: context.read<AppState>().windows,
+                stack: deskOf(context),
                 child: Scaffold(
                   backgroundColor: Colors.transparent,
                   body: _stillReading(
@@ -886,6 +929,39 @@ class _PluginViewerPageState extends State<PluginViewerPage> {
         ),
         ),
       ),
+      ),
+    );
+  }
+}
+
+/// **Ctrl+Shift+D, wherever the keyboard is on the page.**
+///
+/// A reading hands almost every key to what it is drawing — a text takes the
+/// arrows, a table takes Enter — so this is a handler above all of that which
+/// claims one chord and lets everything else through. Null means the machine
+/// cannot make a window and the chord means nothing.
+class _DetachKey extends StatelessWidget {
+  const _DetachKey({required this.onDetach, required this.child});
+
+  final VoidCallback? onDetach;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final onDetach = this.onDetach;
+    if (onDetach == null) return child;
+    return Focus(
+      // Not autofocused: the page's own Escape handler wants the keyboard,
+      // and this only ever sees what that did not claim.
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (!isDetachKey(event)) return KeyEventResult.ignored;
+        onDetach();
+        return KeyEventResult.handled;
+      },
+      child: child,
     );
   }
 }

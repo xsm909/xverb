@@ -279,8 +279,10 @@ class _PluginFormState extends State<PluginForm> {
           color: ink.withValues(alpha: 0.4),
           fontSize: theme.fontSize,
         ),
-        filled: true,
-        fillColor: ink.withValues(alpha: 0.06),
+        // **No trough.** A field used to be a wash with a line under it; what
+        // says *you can type here* is the box drawn round it, like every
+        // other control in the window.
+        filled: false,
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(4),

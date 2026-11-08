@@ -28,6 +28,7 @@ import '../../core/update/update_log.dart';
 import '../../core/update/updater_handoff.dart';
 import '../../core/update/updater_runner.dart';
 import '../../core/version.dart';
+import '../../core/window/x_window.dart';
 import '../widgets/press_and_hold.dart' show kPressDevices;
 
 /// Sets up a small centred window and runs the update in it.
@@ -36,6 +37,22 @@ Future<void> runUpdater({
   required AppearanceSettings appearance,
   UpdaterRunner? runner,
 }) async {
+  if (Platform.isWindows) {
+    // **The runner's own window here**, not window_manager's: the runner
+    // answers the close button by asking Dart, so the asking is answered
+    // here, and the window is made the updater's size before it is shown.
+    final window = XWindow.instance;
+    window.onCloseRequested = window.destroy;
+    await window.placeFirstWindow(const Size(520, 460));
+    runApp(UpdaterApp(
+      handoff: handoff,
+      appearance: appearance,
+      runner: runner ?? UpdaterRunner(handoff: handoff),
+    ));
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => unawaited(window.show()));
+    return;
+  }
   await windowManager.ensureInitialized();
   // Tall enough for every step and a failure under them, without the list
   // having to scroll: a step that has to be scrolled to is a step not read.
@@ -188,7 +205,7 @@ class _UpdaterScreenState extends State<UpdaterScreen> {
     // the only account of what happened.
     if (last.stage == UpdateStage.installed) {
       await Future<void>.delayed(const Duration(milliseconds: 1200));
-      await windowManager.close();
+      await _closeWindow();
     }
   }
 
@@ -248,7 +265,9 @@ class _UpdaterScreenState extends State<UpdaterScreen> {
         // The window has no title bar of its own, so it is dragged by its face.
         // Not by the trackpad's scroll, though: see kPressDevices.
         supportedDevices: kPressDevices,
-        onPanStart: (_) => windowManager.startDragging(),
+        onPanStart: (_) => Platform.isWindows
+            ? XWindow.instance.startDragging()
+            : windowManager.startDragging(),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
@@ -316,7 +335,7 @@ class _UpdaterScreenState extends State<UpdaterScreen> {
                         child: Text(_copied ? tr('Copied') : tr('Copy')),
                       ),
                     TextButton(
-                      onPressed: () => windowManager.close(),
+                      onPressed: _closeWindow,
                       child: Text(tr('Close')),
                     ),
                   ],
@@ -392,3 +411,9 @@ class _StepRow extends StatelessWidget {
     );
   }
 }
+
+/// The updater's window asked to close: the runner's own on Windows, which
+/// is answered by `onCloseRequested`, and window_manager's elsewhere.
+Future<void> _closeWindow() => Platform.isWindows
+    ? XWindow.instance.requestClose()
+    : windowManager.close();

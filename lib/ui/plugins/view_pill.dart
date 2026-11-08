@@ -65,6 +65,12 @@ class _ViewPillState extends State<ViewPill> {
   Widget build(BuildContext context) {
     final theme = widget.theme;
 
+    // **Open is an inversion, the rest is a line.** A pill standing open is
+    // the one thing on the bar that has the window's attention, and swapping
+    // its ink and its ground is how a console says that. Anything less than
+    // open — the pointer merely over it — is said by the contour alone: a
+    // wash under the pointer and a second, fainter wash at rest were two
+    // fills saying what one line says.
     final Color background;
     final Color foreground;
     if (_open) {
@@ -72,11 +78,8 @@ class _ViewPillState extends State<ViewPill> {
       foreground = theme.accentColor.computeLuminance() > 0.5
           ? Colors.black
           : Colors.white;
-    } else if (_hovered) {
-      background = theme.accentColor.withValues(alpha: 0.28);
-      foreground = theme.headerForeground;
     } else {
-      background = theme.panelForeground.withValues(alpha: 0.07);
+      background = Colors.transparent;
       foreground = theme.headerForeground;
     }
 
@@ -101,9 +104,11 @@ class _ViewPillState extends State<ViewPill> {
               color: background,
               borderRadius: BorderRadius.circular(11),
               border: Border.all(
-                color: _open || _hovered
+                color: _open
                     ? theme.accentColor
-                    : theme.headerForeground.withValues(alpha: 0.12),
+                    : _hovered
+                        ? theme.elementColor
+                        : theme.chromeRule,
               ),
             ),
             child: Row(

@@ -51,8 +51,24 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   //
   // Hiding it is one call and it is instant. What follows is spent behind an
   // empty screen, which is where a teardown belongs.
-  if (HWND handle = window.GetHandle()) {
-    ::ShowWindow(handle, SW_HIDE);
+  //
+  // **Every window of the application goes, the detached ones first.** A
+  // view detached into a window of its own is a window of this thread that
+  // the windowing API made; left alone it stayed up, dead, for the seconds
+  // the teardown takes, and then vanished — the commander gone and a
+  // detached reading still hanging there.
+  HWND first = window.GetHandle();
+  ::EnumThreadWindows(
+      ::GetCurrentThreadId(),
+      [](HWND other, LPARAM main) -> BOOL {
+        if (other != reinterpret_cast<HWND>(main) && ::IsWindowVisible(other)) {
+          ::ShowWindow(other, SW_HIDE);
+        }
+        return TRUE;
+      },
+      reinterpret_cast<LPARAM>(first));
+  if (first) {
+    ::ShowWindow(first, SW_HIDE);
   }
 
   // **And the teardown happens here, not after `CoUninitialize`.** `window` is
